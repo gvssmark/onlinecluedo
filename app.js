@@ -314,7 +314,7 @@ document.getElementById("startGameBtn").addEventListener("click", async () => {
   });
   await update(ref(db, "rooms/" + roomCode), {
     status: "playing", envelope, hands, positions, notebooks,
-    turnIndex: 0, suggestedThisTurn: false,
+    turnIndex: 0, suggestedThisTurn: false, accusedThisTurn: false,
     log: [{msg: "Cards dealt. The envelope is sealed. Rule: " + (roomState.ruleMode==="family"?"Family":"Normal") + ".", ts: Date.now()}],
   });
 });
@@ -460,7 +460,7 @@ function renderControls(){
   const cp = roomState.players[currentTurnUid()];
   const myPos = roomState.positions[myUid];
   document.getElementById("rollBtn").disabled = !mine || roomState.status !== "playing" || !!roomState.diceTotal;
-  document.getElementById("accuseBtn").disabled = !mine || roomState.status !== "playing";
+  document.getElementById("accuseBtn").disabled = !mine || roomState.status !== "playing" || !!roomState.accusedThisTurn;
   document.getElementById("endTurnBtn").disabled = !mine || !roomState.canEndTurn;
   document.getElementById("suggestBtn").disabled = !mine || !isRoom(myPos) || !!roomState.suggestedThisTurn;
 
@@ -524,7 +524,7 @@ document.getElementById("endTurnBtn").addEventListener("click", async () => {
   document.getElementById("die1").textContent = "–";
   document.getElementById("die2").textContent = "–";
   document.getElementById("diceTotal").textContent = "–";
-  await update(roomRef(""), { turnIndex: nextIdx, diceTotal: null, canEndTurn: false, suggestedThisTurn: false });
+  await update(roomRef(""), { turnIndex: nextIdx, diceTotal: null, canEndTurn: false, suggestedThisTurn: false, accusedThisTurn: false });
 });
 
 async function pushLog(msg){
@@ -813,7 +813,7 @@ document.getElementById("accuseBtn").addEventListener("click", () => {
       );
       document.getElementById("accOkBtn").addEventListener("click", async () => {
         closeModal();
-        await update(roomRef(""), { canEndTurn: true });
+        await update(roomRef(""), { canEndTurn: true, accusedThisTurn: true });
         await pushLog(roomState.players[myUid].name + " made an accusation. (Result kept private.)");
       });
     }
