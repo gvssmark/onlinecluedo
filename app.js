@@ -20,6 +20,10 @@ const fbApp = initializeApp(firebaseConfig);
 const db = getDatabase(fbApp);
 const auth = getAuth(fbApp);
 
+// Bump this on every future update so it's obvious in the UI that GitHub Pages served the new build.
+const BUILD_VERSION = 6;
+document.getElementById("appTitle").textContent = "Cluedo Online " + BUILD_VERSION;
+
 let myUid = null;
 let myName = "";
 let roomCode = null;
@@ -131,6 +135,14 @@ function ensureAuthed(cb){
   });
 }
 
+// ---------- Remembered name (this device) ----------
+const savedName = localStorage.getItem("cluedoPlayerName") || "";
+document.getElementById("createName").value = savedName;
+document.getElementById("joinName").value = savedName;
+function rememberName(name){
+  if (name) localStorage.setItem("cluedoPlayerName", name);
+}
+
 // ---------- Landing tabs ----------
 document.getElementById("tabCreate").addEventListener("click", () => {
   document.getElementById("tabCreate").classList.add("active");
@@ -154,6 +166,7 @@ document.getElementById("createBtn").addEventListener("click", () => {
   ensureAuthed(async () => {
     const code = genRoomCode();
     myName = name;
+    rememberName(name);
     const initial = {
       status: "lobby",
       numPlayers, ruleMode,
@@ -187,6 +200,7 @@ document.getElementById("joinBtn").addEventListener("click", () => {
     const seat = Object.keys(existing).length;
     if (seat >= room.numPlayers){ setLandingStatus("That room is already full."); return; }
     myName = name;
+    rememberName(name);
     const order = (room.order || []).concat(myUid);
     await update(ref(db, "rooms/" + code), {
       ["players/" + myUid]: { name, color: TOKEN_COLORS[seat % TOKEN_COLORS.length], seat },
@@ -531,6 +545,22 @@ async function pushLog(msg){
   const entries = (roomState.log || []).concat([{msg, ts: Date.now()}]);
   await update(roomRef(""), { log: entries });
 }
+
+document.getElementById("downloadLogBtn").addEventListener("click", () => {
+  const entries = roomState ? (roomState.log || []) : [];
+  const lines = entries.map(e => "[" + new Date(e.ts).toLocaleTimeString() + "] " + e.msg);
+  const header = "Cluedo Online build " + BUILD_VERSION + " — room " + roomCode + " — exported " + new Date().toLocaleString();
+  const text = header + "\n" + "-".repeat(header.length) + "\n" + lines.join("\n") + "\n";
+  const blob = new Blob([text], { type: "text/plain" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "cluedo-log-" + (roomCode || "room") + "-" + Date.now() + ".txt";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+});
 
 // ---------- Hand ----------
 function renderHand(){
