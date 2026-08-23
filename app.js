@@ -21,7 +21,7 @@ const db = getDatabase(fbApp);
 const auth = getAuth(fbApp);
 
 // Bump this on every future update so it's obvious in the UI that GitHub Pages served the new build.
-const BUILD_VERSION = 8;
+const BUILD_VERSION = 10;
 document.getElementById("appTitle").textContent = "Cluedo Online " + BUILD_VERSION;
 
 let myUid = null;
@@ -503,6 +503,7 @@ let suggesterModalOpen = false;
 let lastProcessedEventCount = 0;
 let finishingSuggestion = false;
 let lastPublicKnowledgeCount = 0;
+let suggesterProcessing = false;
 
 function buildBoardDOM(){
   boardBuilt = true;
@@ -746,7 +747,7 @@ document.getElementById("downloadLogBtn").addEventListener("click", () => {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = "cluedo-log-" + (roomCode || "room") + "-" + Date.now() + ".txt";
+  a.download = "cluedo-log-b" + BUILD_VERSION + "-" + (roomCode || "room") + "-" + Date.now() + ".txt";
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -933,8 +934,8 @@ async function advanceQueue(ps, stopHere){
 }
 
 async function processSuggesterEvents(ps){
+  if (suggesterModalOpen || suggesterProcessing) return;
   const events = ps.events || [];
-  if (suggesterModalOpen) return;
   if (lastProcessedEventCount < events.length){
     const evt = events[lastProcessedEventCount];
     if (evt.matched && evt.card){
@@ -946,19 +947,24 @@ async function processSuggesterEvents(ps){
       );
       document.getElementById("revealOkBtn").addEventListener("click", async () => {
         closeModal();
-        suggesterModalOpen = false;
+        suggesterProcessing = true;
         lastProcessedEventCount++;
         await update(ref(db, "rooms/" + roomCode + "/notebooks/" + myUid + "/" + evt.card), { [evt.by]: "auto-shown" });
         await pushLog(roomState.players[evt.by].name + " showed a card to " + roomState.players[myUid].name + " privately.");
+        suggesterModalOpen = false;
+        suggesterProcessing = false;
       });
       return;
     }
+    suggesterProcessing = true;
     lastProcessedEventCount++;
     await pushLog(roomState.players[evt.by].name + " had nothing to show and passed.");
+    suggesterProcessing = false;
     return;
   }
   if (ps.idx >= ps.queue.length && lastProcessedEventCount >= events.length && !finishingSuggestion){
     finishingSuggestion = true;
+    suggesterProcessing = true;
     const anyMatched = events.some(e => e.matched);
     if (!anyMatched){
       const trio = [ps.suspect, ps.weapon, ps.room];
@@ -968,6 +974,7 @@ async function processSuggesterEvents(ps){
     }
     await update(roomRef(""), { pendingSuggestion: null, canEndTurn: true });
     finishingSuggestion = false;
+    suggesterProcessing = false;
   }
 }
 
