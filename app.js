@@ -3,7 +3,7 @@ import {
   getDatabase, ref, set, get, update, onValue, child
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-database.js";
 import {
-  getAuth, signInAnonymously, onAuthStateChanged
+  getAuth, signInAnonymously, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signOut
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
 
 // ---------- Firebase config (cluedo-online project) ----------
@@ -21,7 +21,7 @@ const db = getDatabase(fbApp);
 const auth = getAuth(fbApp);
 
 // Bump this on every future update so it's obvious in the UI that GitHub Pages served the new build.
-const BUILD_VERSION = 6;
+const BUILD_VERSION = 7;
 document.getElementById("appTitle").textContent = "Cluedo Online " + BUILD_VERSION;
 
 let myUid = null;
@@ -29,6 +29,24 @@ let myName = "";
 let roomCode = null;
 let unsubscribeRoom = null;
 let roomState = null; // last snapshot value from DB
+let retired = false;
+let isCreatorSession = false;
+
+// Family allowlist for room *creation* only — joining a room never needs this.
+// Source file had commas in place of dots (export artifact); normalized here.
+const ALLOWED_EMAILS = {
+  "deepti.mannava@gmail.com": true,
+  "hgoteti@gmail.com": true,
+  "hemanth.goteti@gmail.com": true,
+  "rajavarapumadhulika@gmail.com": true,
+  "sahiti.malyala@gmail.com": true,
+  "gbtsundary@gmail.com": true,
+  "subrahmanyam.malyala@gmail.com": true,
+  "prasuna.malyala@gmail.com": true,
+  "hngoteti@gmail.com": true,
+  "komal.raj@gmail.com": true,
+  "gvssmark@gmail.com": true,
+};
 
 // ---------- Board data model (same as local prototype) ----------
 const ROOMS = {
@@ -122,22 +140,18 @@ function genRoomCode(){
 }
 
 // ---------- Auth ----------
+// No eager anonymous sign-in on load: Create uses Google auth, Join uses lazy anonymous auth.
 onAuthStateChanged(auth, (user) => {
-  if (user) myUid = user.uid;
+  if (user && !isCreatorSession) myUid = user.uid;
 });
-signInAnonymously(auth).catch(err => {
-  document.getElementById("landingStatus").textContent = "Sign-in failed: " + err.message;
-});
-function ensureAuthed(cb){
-  if (myUid){ cb(); return; }
-  const unsub = onAuthStateChanged(auth, (user) => {
-    if (user){ myUid = user.uid; unsub(); cb(); }
-  });
+function ensureAnonAuthed(cb){
+  if (myUid && !isCreatorSession){ cb(); return; }
+  signInAnonymously(auth).then((cred) => { myUid = cred.user.uid; cb(); })
+    .catch(err => setLandingStatus("Sign-in failed: " + err.message));
 }
 
 // ---------- Remembered name (this device) ----------
 const savedName = localStorage.getItem("cluedoPlayerName") || "";
-document.getElementById("createName").value = savedName;
 document.getElementById("joinName").value = savedName;
 function rememberName(name){
   if (name) localStorage.setItem("cluedoPlayerName", name);
@@ -157,28 +171,43 @@ document.getElementById("tabJoin").addEventListener("click", () => {
   document.getElementById("createForm").classList.add("hidden");
 });
 
-// ---------- Create room ----------
-document.getElementById("createBtn").addEventListener("click", () => {
-  const name = (document.getElementById("createName").value || "").trim();
-  if (!name){ setLandingStatus("Enter your name first."); return; }
+// ---------- Create room (Google-authenticated, allowlisted) ----------
+document.getElementById("googleSignInBtn").addEventListener("click", async () => {
+  try{
+    const provider = new GoogleAuthProvider();
+    const result = await signInWithPopup(auth, provider);
+    const email = (result.user.email || "").toLowerCase();
+    if (!ALLOWED_EMAILS[email]){
+      setLandingStatus("That Google account isn't on the family list — ask the room creator to use their own account.");
+      await signOut(auth);
+      return;
+    }
+    myUid = result.user.uid;
+    isCreatorSession = true;
+    setLandingStatus("");
+    document.getElementById("googleSignInStep").classList.add("hidden");
+    document.getElementById("createSettingsStep").classList.remove("hidden");
+    document.getElementById("signedInAsHint").textContent = "Signed in as " + email;
+  } catch(err){
+    setLandingStatus("Google sign-in failed: " + err.message);
+  }
+});
+
+document.getElementById("createBtn").addEventListener("click", async () => {
   const numPlayers = parseInt(document.getElementById("createNumPlayers").value, 10);
   const ruleMode = document.getElementById("createRuleMode").value;
-  ensureAuthed(async () => {
-    const code = genRoomCode();
-    myName = name;
-    rememberName(name);
-    const initial = {
-      status: "lobby",
-      numPlayers, ruleMode,
-      hostUid: myUid,
-      players: { [myUid]: { name, color: TOKEN_COLORS[0], seat: 0 } },
-      order: [myUid],
-      createdAt: Date.now(),
-    };
-    await set(ref(db, "rooms/" + code), initial);
-    roomCode = code;
-    watchRoom();
-  });
+  const code = genRoomCode();
+  const initial = {
+    status: "lobby",
+    numPlayers, ruleMode,
+    hostUid: myUid,
+    creatorUid: myUid,
+    players: {}, order: [],
+    createdAt: Date.now(),
+  };
+  await set(ref(db, "rooms/" + code), initial);
+  roomCode = code;
+  watchRoom();
 });
 
 // ---------- Join room ----------
@@ -187,7 +216,7 @@ document.getElementById("joinBtn").addEventListener("click", () => {
   const code = (document.getElementById("joinCode").value || "").trim().toUpperCase();
   if (!name){ setLandingStatus("Enter your name first."); return; }
   if (!code){ setLandingStatus("Enter the room code."); return; }
-  ensureAuthed(async () => {
+  ensureAnonAuthed(async () => {
     const snap = await get(ref(db, "rooms/" + code));
     if (!snap.exists()){ setLandingStatus("No room with that code."); return; }
     const room = snap.val();
@@ -216,9 +245,9 @@ function setLandingStatus(msg){ document.getElementById("landingStatus").textCon
 // ---------- Watch room state ----------
 function watchRoom(){
   document.getElementById("landingPanel").classList.add("hidden");
-  onValue(ref(db, "rooms/" + roomCode), (snap) => {
+  unsubscribeRoom = onValue(ref(db, "rooms/" + roomCode), (snap) => {
     roomState = snap.val();
-    if (!roomState) return;
+    if (!roomState || retired) return;
     render();
   });
 }
@@ -290,7 +319,33 @@ function renderLobby(){
     hint.textContent = have >= need ? "Waiting for the host to start the game." :
       "Waiting for " + (need - have) + " more player(s), then the host will start.";
   }
+
+  const transferBlock = document.getElementById("transferHostBlock");
+  const isCreatorStillHost = isCreatorSession && myUid === roomState.creatorUid && myUid === roomState.hostUid;
+  if (isCreatorStillHost && order.length > 0){
+    transferBlock.classList.remove("hidden");
+    const sel = document.getElementById("transferHostSelect");
+    sel.innerHTML = "";
+    order.forEach(uid => {
+      const opt = document.createElement("option");
+      opt.value = uid; opt.textContent = players[uid].name;
+      sel.appendChild(opt);
+    });
+  } else {
+    transferBlock.classList.add("hidden");
+  }
 }
+
+document.getElementById("transferHostBtn").addEventListener("click", async () => {
+  const targetUid = document.getElementById("transferHostSelect").value;
+  if (!targetUid) return;
+  await update(roomRef(""), { hostUid: targetUid });
+  retired = true;
+  if (unsubscribeRoom) unsubscribeRoom();
+  document.getElementById("lobbyPanel").classList.add("hidden");
+  document.getElementById("gameArea").classList.add("hidden");
+  document.getElementById("retiredPanel").classList.remove("hidden");
+});
 
 async function reorderPlayers(fromIdx, toIdx){
   const order = roomState.order.slice();
@@ -461,6 +516,12 @@ function renderLog(){
 }
 
 function renderControls(){
+  if (myUid === roomState.creatorUid && !roomState.players[myUid]){
+    ["rollBtn","suggestBtn","accuseBtn","endTurnBtn"].forEach(id => document.getElementById(id).disabled = true);
+    document.getElementById("passageBtn").style.display = "none";
+    document.getElementById("hintText").textContent = "You're the room admin — spectating only, no cards dealt to you.";
+    return;
+  }
   if (roomState.pendingSuggestion){
     ["rollBtn","suggestBtn","accuseBtn","endTurnBtn"].forEach(id => document.getElementById(id).disabled = true);
     document.getElementById("passageBtn").style.display = "none";

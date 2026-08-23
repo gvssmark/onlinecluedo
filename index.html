@@ -19,21 +19,26 @@
     </div>
 
     <div id="createForm">
-      <label>Your name</label>
-      <input type="text" id="createName" placeholder="Your name">
-      <label style="margin-top:10px;">Number of players</label>
-      <select id="createNumPlayers">
-        <option value="3">3 players</option>
-        <option value="4" selected>4 players</option>
-        <option value="5">5 players</option>
-        <option value="6">6 players</option>
-      </select>
-      <label style="margin-top:10px;">Suggestion rule</label>
-      <select id="createRuleMode">
-        <option value="normal">Normal — stop at the first player who can disprove</option>
-        <option value="family">Family — full round; a repeat card may be passed on</option>
-      </select>
-      <button class="block" id="createBtn" style="margin-top:14px;">Create room</button>
+      <div id="googleSignInStep">
+        <div class="hint">Only approved family members can create a room. Sign in with the Google account on the family list.</div>
+        <button class="block" id="googleSignInBtn" style="margin-top:10px;">Sign in with Google</button>
+      </div>
+      <div id="createSettingsStep" class="hidden">
+        <div class="hint" id="signedInAsHint"></div>
+        <label style="margin-top:10px;">Number of players</label>
+        <select id="createNumPlayers">
+          <option value="3">3 players</option>
+          <option value="4" selected>4 players</option>
+          <option value="5">5 players</option>
+          <option value="6">6 players</option>
+        </select>
+        <label style="margin-top:10px;">Suggestion rule</label>
+        <select id="createRuleMode">
+          <option value="normal">Normal — stop at the first player who can disprove</option>
+          <option value="family">Family — full round; a repeat card may be passed on</option>
+        </select>
+        <button class="block" id="createBtn" style="margin-top:14px;">Create room</button>
+      </div>
     </div>
 
     <div id="joinForm" class="hidden">
@@ -47,6 +52,10 @@
   </div>
 
   <!-- LOBBY -->
+  <div class="panel hidden" id="retiredPanel">
+    <h2>Hosting transferred</h2>
+    <p style="font-family:'Courier New',monospace;font-size:12px;color:var(--parchment-dim);">You've handed off hosting — the family can keep playing without you. You can close this tab.</p>
+  </div>
   <div class="panel hidden" id="lobbyPanel">
     <h2>Waiting room</h2>
     <div class="room-code">Room code: <b id="lobbyCode">—</b></div>
@@ -54,6 +63,12 @@
     <div id="lobbyPlayerList" class="lobby-list"></div>
     <div class="hint" id="lobbyOrderHint" style="display:none;">Drag order with the arrows, or shuffle randomly.</div>
     <button class="block secondary hidden" id="shuffleOrderBtn">Shuffle order</button>
+    <div id="transferHostBlock" class="hidden" style="margin-top:14px;">
+      <label>Transfer host to</label>
+      <select id="transferHostSelect"></select>
+      <button class="block secondary" id="transferHostBtn">Transfer host &amp; retire</button>
+      <div class="hint">Once transferred, that player becomes host and you can close this tab — you won't be dealt cards.</div>
+    </div>
     <div class="hint" id="lobbyHint"></div>
     <button class="block" id="startGameBtn" style="display:none;">Start game</button>
   </div>
