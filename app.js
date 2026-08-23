@@ -21,7 +21,7 @@ const db = getDatabase(fbApp);
 const auth = getAuth(fbApp);
 
 // Bump this on every future update so it's obvious in the UI that GitHub Pages served the new build.
-const BUILD_VERSION = 10;
+const BUILD_VERSION = 11;
 document.getElementById("appTitle").textContent = "Cluedo Online " + BUILD_VERSION;
 
 let myUid = null;
@@ -679,6 +679,7 @@ document.getElementById("rollBtn").addEventListener("click", async () => {
   await update(roomRef(""), { diceTotal: total, canEndTurn: reachable.size === 0 });
   await pushLog((roomState.players[myUid].name) + " rolled " + d1 + " + " + d2 + " = " + total + ".");
   renderBoardTokens();
+  if (reachable.size === 0) offerNextAction();
 });
 
 document.getElementById("passageBtn").addEventListener("click", async () => {
@@ -696,9 +697,10 @@ async function onCellClick(id){
   reachable = new Set();
   const label = isRoom(id) ? ROOMS[id].name : "the hallway";
   await pushLog(roomState.players[myUid].name + " moved to " + label + ".");
+  if (!isRoom(id)) offerNextAction(); // landing in a room leaves suggestion still on the table
 }
 
-document.getElementById("endTurnBtn").addEventListener("click", async () => {
+async function endMyTurn(){
   if (!isMyTurn() || !roomState.canEndTurn) return;
   const nextIdx = (roomState.turnIndex + 1) % roomState.order.length;
   reachable = new Set();
@@ -706,7 +708,29 @@ document.getElementById("endTurnBtn").addEventListener("click", async () => {
   document.getElementById("die2").textContent = "–";
   document.getElementById("diceTotal").textContent = "–";
   await update(roomRef(""), { turnIndex: nextIdx, diceTotal: null, canEndTurn: false, suggestedThisTurn: false, accusedThisTurn: false });
-});
+}
+document.getElementById("endTurnBtn").addEventListener("click", endMyTurn);
+
+function offerNextAction(){
+  if (!isMyTurn() || overlay.classList.contains("open")) return;
+  const canAccuse = !roomState.accusedThisTurn;
+  showModal(
+    "<h3>What next?</h3>" +
+    "<p>" + (canAccuse ? "You can still make an accusation, or end your turn." : "Ready to end your turn?") + "</p>" +
+    (canAccuse ? "<button class='block secondary' id='quickAccuseBtn'>Make an accusation</button>" : "") +
+    "<button class='block' id='quickEndTurnBtn'>End turn</button>"
+  );
+  if (canAccuse){
+    document.getElementById("quickAccuseBtn").addEventListener("click", () => {
+      closeModal();
+      openAccusationModal();
+    });
+  }
+  document.getElementById("quickEndTurnBtn").addEventListener("click", () => {
+    closeModal();
+    endMyTurn();
+  });
+}
 
 async function pushLog(msg){
   const entries = (roomState.log || []).concat([{msg, ts: Date.now()}]);
@@ -953,6 +977,7 @@ async function processSuggesterEvents(ps){
         await pushLog(roomState.players[evt.by].name + " showed a card to " + roomState.players[myUid].name + " privately.");
         suggesterModalOpen = false;
         suggesterProcessing = false;
+        if (roomState.pendingSuggestion) processSuggesterEvents(roomState.pendingSuggestion);
       });
       return;
     }
@@ -960,6 +985,7 @@ async function processSuggesterEvents(ps){
     lastProcessedEventCount++;
     await pushLog(roomState.players[evt.by].name + " had nothing to show and passed.");
     suggesterProcessing = false;
+    if (roomState.pendingSuggestion) processSuggesterEvents(roomState.pendingSuggestion);
     return;
   }
   if (ps.idx >= ps.queue.length && lastProcessedEventCount >= events.length && !finishingSuggestion){
@@ -975,6 +1001,7 @@ async function processSuggesterEvents(ps){
     await update(roomRef(""), { pendingSuggestion: null, canEndTurn: true });
     finishingSuggestion = false;
     suggesterProcessing = false;
+    offerNextAction();
   }
 }
 
@@ -998,7 +1025,7 @@ function handlePublicKnowledge(){
 }
 
 // ---------- Accusation ----------
-document.getElementById("accuseBtn").addEventListener("click", () => {
+function openAccusationModal(){
   if (!isMyTurn()) return;
   const suspectOpts = SUSPECTS.map(s => "<option>"+s+"</option>").join("");
   const weaponOpts = WEAPONS.map(w => "<option>"+w+"</option>").join("");
@@ -1043,7 +1070,9 @@ document.getElementById("accuseBtn").addEventListener("click", () => {
         closeModal();
         await update(roomRef(""), { canEndTurn: true, accusedThisTurn: true });
         await pushLog(roomState.players[myUid].name + " made an accusation. (Result kept private.)");
+        offerNextAction();
       });
     }
   });
-});
+}
+document.getElementById("accuseBtn").addEventListener("click", openAccusationModal);
