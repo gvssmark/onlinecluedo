@@ -324,6 +324,15 @@ let boardBuilt = false;
 let reachable = new Set();
 let lastLogCount = 0;
 
+// ---------- Suggestion handshake trackers ----------
+let currentPendingId = null;
+let respondedForKey = null;
+let responderModalOpen = false;
+let suggesterModalOpen = false;
+let lastProcessedEventCount = 0;
+let finishingSuggestion = false;
+let lastPublicKnowledgeCount = 0;
+
 function buildBoardDOM(){
   boardBuilt = true;
   const board = document.getElementById("board");
@@ -404,6 +413,8 @@ function renderGame(){
   renderHand();
   renderNotebook();
   renderLog();
+  handlePendingSuggestion(roomState.pendingSuggestion || null);
+  handlePublicKnowledge();
 }
 
 function renderTurnOrder(){
@@ -436,13 +447,22 @@ function renderLog(){
 }
 
 function renderControls(){
+  if (roomState.pendingSuggestion){
+    ["rollBtn","suggestBtn","accuseBtn","endTurnBtn"].forEach(id => document.getElementById(id).disabled = true);
+    document.getElementById("passageBtn").style.display = "none";
+    const ps = roomState.pendingSuggestion;
+    document.getElementById("hintText").textContent = ps.suggester === myUid
+      ? "Waiting for players to respond to your suggestion…"
+      : (ps.queue[ps.idx] === myUid ? "Check the popup — you may be able to disprove this." : "A suggestion is being resolved…");
+    return;
+  }
   const mine = isMyTurn();
   const cp = roomState.players[currentTurnUid()];
   const myPos = roomState.positions[myUid];
   document.getElementById("rollBtn").disabled = !mine || roomState.status !== "playing" || !!roomState.diceTotal;
   document.getElementById("accuseBtn").disabled = !mine || roomState.status !== "playing";
   document.getElementById("endTurnBtn").disabled = !mine || !roomState.canEndTurn;
-  document.getElementById("suggestBtn").disabled = true; // arriving in the next remote stage
+  document.getElementById("suggestBtn").disabled = !mine || !isRoom(myPos) || !!roomState.suggestedThisTurn;
 
   const passageBtn = document.getElementById("passageBtn");
   if (mine && isRoom(myPos) && SECRET_PASSAGES[myPos] && !roomState.diceTotal){
@@ -459,6 +479,8 @@ function renderControls(){
     hint.textContent = "Rolled " + roomState.diceTotal + ". Click a highlighted square to move.";
   } else if (roomState.diceTotal){
     hint.textContent = "No square is reachable — end your turn.";
+  } else if (isRoom(myPos)){
+    hint.textContent = "You may make a suggestion, or roll to keep moving.";
   } else {
     hint.textContent = "Roll the dice, then click a highlighted square to move.";
   }
@@ -502,7 +524,7 @@ document.getElementById("endTurnBtn").addEventListener("click", async () => {
   document.getElementById("die1").textContent = "–";
   document.getElementById("die2").textContent = "–";
   document.getElementById("diceTotal").textContent = "–";
-  await update(roomRef(""), { turnIndex: nextIdx, diceTotal: null, canEndTurn: false });
+  await update(roomRef(""), { turnIndex: nextIdx, diceTotal: null, canEndTurn: false, suggestedThisTurn: false });
 });
 
 async function pushLog(msg){
@@ -573,6 +595,179 @@ const overlay = document.getElementById("modalOverlay");
 const modalBox = document.getElementById("modalBox");
 function showModal(html){ modalBox.innerHTML = html; overlay.classList.add("open"); }
 function closeModal(){ overlay.classList.remove("open"); modalBox.innerHTML = ""; }
+
+// ---------- Suggestion (live handshake) ----------
+document.getElementById("suggestBtn").addEventListener("click", () => {
+  if (!isMyTurn()) return;
+  const myPos = roomState.positions[myUid];
+  if (!isRoom(myPos)) return;
+  const roomName = ROOMS[myPos].name;
+  const suspectOpts = SUSPECTS.map(s => "<option>"+s+"</option>").join("");
+  const weaponOpts = WEAPONS.map(w => "<option>"+w+"</option>").join("");
+  showModal(
+    "<h3>Make a suggestion</h3>" +
+    "<p>You suggest it happened in the <b>" + roomName + "</b> with:</p>" +
+    "<label style='display:block;color:#cfc4a8;font-family:monospace;font-size:11px;margin-bottom:4px;'>Suspect</label>" +
+    "<select id='sugSuspect' style='width:100%;margin-bottom:10px;padding:8px;background:#111823;color:#ece4d3;border:1px solid #3a475a;border-radius:4px;'>"+suspectOpts+"</select>" +
+    "<label style='display:block;color:#cfc4a8;font-family:monospace;font-size:11px;margin-bottom:4px;'>Weapon</label>" +
+    "<select id='sugWeapon' style='width:100%;margin-bottom:14px;padding:8px;background:#111823;color:#ece4d3;border:1px solid #3a475a;border-radius:4px;'>"+weaponOpts+"</select>" +
+    "<button class='block' id='sugSubmitBtn'>Submit suggestion</button>" +
+    "<button class='block secondary' id='sugCancelBtn'>Cancel</button>"
+  );
+  document.getElementById("sugCancelBtn").addEventListener("click", closeModal);
+  document.getElementById("sugSubmitBtn").addEventListener("click", async () => {
+    const suspect = document.getElementById("sugSuspect").value;
+    const weapon = document.getElementById("sugWeapon").value;
+    closeModal();
+    const order = roomState.order;
+    const startIdx = order.indexOf(myUid);
+    const queue = [];
+    for(let step=1; step<order.length; step++) queue.push(order[(startIdx+step) % order.length]);
+    const pendingSuggestion = {
+      id: Date.now(), suggester: myUid, suspect, weapon, room: roomName,
+      ruleMode: roomState.ruleMode, queue, idx: 0, events: [],
+    };
+    await update(roomRef(""), { pendingSuggestion, suggestedThisTurn: true });
+    await pushLog(roomState.players[myUid].name + " suggested " + suspect + " with the " + weapon + " in the " + roomName + ".");
+  });
+});
+
+function handlePendingSuggestion(ps){
+  if (!ps){ currentPendingId = null; return; }
+  if (ps.id !== currentPendingId){
+    currentPendingId = ps.id; respondedForKey = null;
+    responderModalOpen = false; suggesterModalOpen = false;
+    lastProcessedEventCount = 0; finishingSuggestion = false;
+  }
+
+  const responderUid = ps.queue[ps.idx];
+  const key = ps.id + ":" + ps.idx;
+  if (responderUid === myUid && respondedForKey !== key && !responderModalOpen && !suggesterModalOpen){
+    responderModalOpen = true;
+    respondedForKey = key;
+    actAsResponder(ps);
+  }
+
+  if (ps.suggester === myUid){
+    processSuggesterEvents(ps);
+  }
+}
+
+async function actAsResponder(ps){
+  const myHand = (roomState.hands || {})[myUid] || [];
+  const trio = [ps.suspect, ps.weapon, ps.room];
+  const matches = myHand.filter(c => trio.includes(c));
+  if (matches.length === 0){
+    await pushSuggestionEvent(ps, { by: myUid, matched: false });
+    await advanceQueue(ps, false);
+    responderModalOpen = false;
+    return;
+  }
+  if (ps.ruleMode === "normal"){
+    showResponderModal(ps, matches, true);
+    return;
+  }
+  const suggesterNb = (roomState.notebooks || {})[ps.suggester] || {};
+  const fresh = matches.filter(c => !(suggesterNb[c] && suggesterNb[c][myUid] === "auto-shown"));
+  if (fresh.length > 0) showResponderModal(ps, fresh, true);
+  else showResponderModal(ps, matches, false);
+}
+
+function showResponderModal(ps, options, mandatory){
+  const optBtns = options.map(c => "<button class='card-option' data-card='"+c+"' style='display:block;width:100%;text-align:left;background:#111823;border:1px solid #3a475a;border-radius:4px;padding:9px 10px;margin-bottom:6px;color:#ece4d3;font-family:monospace;font-size:12.5px;cursor:pointer;'>"+c+"</button>").join("");
+  const passBtn = mandatory ? "" : "<button class='block secondary' id='sugPassBtn'>Pass — already shown</button>";
+  showModal(
+    "<h3>" + (mandatory ? "You can disprove this" : "Show again, or pass?") + "</h3>" +
+    "<p>" + roomState.players[ps.suggester].name + " suggested <b>"+ps.suspect+"</b>, <b>"+ps.weapon+"</b>, <b>"+ps.room+"</b>. " +
+    (mandatory ? "Pick one matching card to show them privately." : "You've already shown every matching card you hold — show one again, or pass.") + "</p>" +
+    optBtns + passBtn
+  );
+  modalBox.querySelectorAll(".card-option").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const card = btn.dataset.card;
+      closeModal();
+      await pushSuggestionEvent(ps, { by: myUid, matched: true, card });
+      await advanceQueue(ps, ps.ruleMode === "normal");
+      responderModalOpen = false;
+    });
+  });
+  const passBtnEl = document.getElementById("sugPassBtn");
+  if (passBtnEl){
+    passBtnEl.addEventListener("click", async () => {
+      closeModal();
+      await pushSuggestionEvent(ps, { by: myUid, matched: false });
+      await advanceQueue(ps, false);
+      responderModalOpen = false;
+    });
+  }
+}
+
+async function pushSuggestionEvent(ps, evt){
+  const events = (ps.events || []).concat([{ ...evt, ts: Date.now() }]);
+  await update(roomRef("pendingSuggestion"), { events });
+}
+async function advanceQueue(ps, stopHere){
+  const newIdx = stopHere ? ps.queue.length : ps.idx + 1;
+  await update(roomRef("pendingSuggestion"), { idx: newIdx });
+}
+
+async function processSuggesterEvents(ps){
+  const events = ps.events || [];
+  if (suggesterModalOpen) return;
+  if (lastProcessedEventCount < events.length){
+    const evt = events[lastProcessedEventCount];
+    if (evt.matched && evt.card){
+      suggesterModalOpen = true;
+      showModal(
+        "<h3>Card shown to you</h3>" +
+        "<p>" + roomState.players[evt.by].name + " showed you: <b>" + evt.card + "</b></p>" +
+        "<button class='block' id='revealOkBtn'>Got it</button>"
+      );
+      document.getElementById("revealOkBtn").addEventListener("click", async () => {
+        closeModal();
+        suggesterModalOpen = false;
+        lastProcessedEventCount++;
+        await update(ref(db, "rooms/" + roomCode + "/notebooks/" + myUid + "/" + evt.card), { [evt.by]: "auto-shown" });
+        await pushLog(roomState.players[evt.by].name + " showed a card to " + roomState.players[myUid].name + " privately.");
+      });
+      return;
+    }
+    lastProcessedEventCount++;
+    await pushLog(roomState.players[evt.by].name + " had nothing to show and passed.");
+    return;
+  }
+  if (ps.idx >= ps.queue.length && lastProcessedEventCount >= events.length && !finishingSuggestion){
+    finishingSuggestion = true;
+    const anyMatched = events.some(e => e.matched);
+    if (!anyMatched){
+      const trio = [ps.suspect, ps.weapon, ps.room];
+      const pk = (roomState.publicKnowledge || []).concat([{ trio, exceptUid: ps.suggester, ts: Date.now() }]);
+      await update(roomRef(""), { publicKnowledge: pk });
+      await pushLog("No one could disprove " + roomState.players[ps.suggester].name + "'s suggestion.");
+    }
+    await update(roomRef(""), { pendingSuggestion: null, canEndTurn: true });
+    finishingSuggestion = false;
+  }
+}
+
+function handlePublicKnowledge(){
+  const list = roomState.publicKnowledge || [];
+  if (lastPublicKnowledgeCount >= list.length) return;
+  const newOnes = list.slice(lastPublicKnowledgeCount);
+  lastPublicKnowledgeCount = list.length;
+  const myNb = (roomState.notebooks || {})[myUid] || {};
+  const updates = {};
+  newOnes.forEach(entry => {
+    roomState.order.forEach(uid => {
+      if (uid === entry.exceptUid) return;
+      entry.trio.forEach(card => {
+        const cur = myNb[card] && myNb[card][uid];
+        if (!cur) updates["notebooks/" + myUid + "/" + card + "/" + uid] = "auto-no";
+      });
+    });
+  });
+  if (Object.keys(updates).length) update(roomRef(""), updates);
+}
 
 // ---------- Accusation ----------
 document.getElementById("accuseBtn").addEventListener("click", () => {
