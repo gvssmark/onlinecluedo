@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Cluedo — Virtual Board (Stage 1)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+  :root{
+    --ink:#1b2430; --ink-2:#232f3e; --parchment:#ece4d3; --parchment-dim:#cfc4a8;
+    --brass:#b8935a; --brass-bright:#d9b571;
+    --green:#4a7a58; --green-bright:#6fae80;
+    --red:#9a3b3b; --red-bright:#c25a5a;
+    --line:#3a475a; --shadow:0 6px 18px rgba(0,0,0,.35);
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; min-height:100vh; padding:20px 14px 60px;
+    background: radial-gradient(ellipse at top left, #23303f 0%, #161d27 55%, #10151d 100%);
+    color:var(--parchment); font-family:Georgia,'Times New Roman',serif;
+  }
+  .wrap{ max-width:1100px; margin:0 auto; }
+  h1{ font-family:'Palatino Linotype',Georgia,serif; font-size:22px; color:var(--parchment);
+      border-bottom:2px solid var(--brass); padding-bottom:10px; margin:0 0 4px; }
+  .subtitle{ font-family:'Courier New',monospace; font-size:11px; color:var(--parchment-dim); letter-spacing:.06em; margin-bottom:18px; }
+
+  .layout{ display:flex; gap:20px; flex-wrap:wrap; align-items:flex-start; }
+  .board-col{ flex:1 1 560px; }
+  .side-col{ flex:0 0 300px; }
+
+  .panel{ background:linear-gradient(180deg,var(--ink-2),var(--ink)); border:1px solid var(--line);
+    border-radius:6px; padding:16px; margin-bottom:16px; box-shadow:var(--shadow); }
+  .panel h2{ font-size:14px; color:var(--brass-bright); border-bottom:1px solid var(--line);
+    padding-bottom:8px; margin:0 0 12px; text-transform:uppercase; letter-spacing:.06em; font-family:'Courier New',monospace; }
+
+  label{ font-size:11px; color:var(--parchment-dim); font-family:'Courier New',monospace;
+    text-transform:uppercase; letter-spacing:.05em; display:block; margin-bottom:4px; }
+  select, input[type=text]{
+    background:#111823; color:var(--parchment); border:1px solid var(--line); border-radius:4px;
+    padding:8px 9px; font-family:'Courier New',monospace; font-size:13px; width:100%;
+  }
+  .player-row{ display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+  .player-row .swatch{ width:16px; height:16px; border-radius:50%; flex-shrink:0; border:2px solid rgba(255,255,255,.5); }
+
+  button{
+    background:var(--brass); color:#1b1408; border:none; border-radius:4px; padding:9px 14px;
+    font-family:'Courier New',monospace; font-size:12px; font-weight:bold; letter-spacing:.05em;
+    text-transform:uppercase; cursor:pointer;
+  }
+  button:hover{ background:var(--brass-bright); }
+  button:disabled{ opacity:.35; cursor:not-allowed; }
+  button.block{ width:100%; margin-top:6px; }
+  button.secondary{ background:transparent; color:var(--brass-bright); border:1px solid var(--brass); }
+
+  .setup-gate.hidden, .game-area.hidden{ display:none; }
+
+  /* ---- Board grid ---- */
+  .board{
+    display:grid; grid-template-columns: 2.1fr .8fr 2.1fr .8fr 2.1fr;
+    grid-template-rows: 2.1fr .8fr 2.1fr .8fr 2.1fr;
+    gap:4px; aspect-ratio:1/1; background:#0c1119; border:3px solid var(--brass);
+    border-radius:8px; padding:10px; position:relative;
+  }
+  .cell{ position:relative; border-radius:5px; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; padding:4px; }
+  .cell.room{ background:linear-gradient(180deg,#232f3e,#1b2430); border:1px solid var(--line); cursor:default; }
+  .cell.room .name{ font-family:'Palatino Linotype',Georgia,serif; font-size:clamp(9px,1.5vw,14px);
+    color:var(--parchment-dim); text-align:center; letter-spacing:.02em; }
+  .cell.hallway{ background:#161d27; border:1px dashed var(--line); }
+  .cell.empty{ background:transparent; }
+  .cell.reachable{ outline:2px solid var(--green-bright); cursor:pointer; }
+  .cell.reachable:hover{ background:rgba(111,174,128,.18); }
+  .cell.reachable.room .name{ color:var(--green-bright); }
+
+  .tokens{ position:absolute; bottom:4px; left:4px; right:4px; display:flex; flex-wrap:wrap; gap:2px; justify-content:center; }
+  .token{ width:18px; height:18px; border-radius:50%; border:2px solid rgba(255,255,255,.6);
+    display:flex; align-items:center; justify-content:center; font-size:9px; font-weight:bold;
+    font-family:'Courier New',monospace; color:#111; box-shadow:0 1px 3px rgba(0,0,0,.5); }
+
+  .passage-btn{ margin-top:4px; background:rgba(184,147,90,.18); border:1px solid var(--brass);
+    color:var(--brass-bright); font-size:8.5px; padding:3px 5px; border-radius:3px; cursor:pointer;
+    font-family:'Courier New',monospace; text-transform:uppercase; }
+  .passage-btn:hover{ background:rgba(184,147,90,.32); }
+
+  /* ---- Side panel ---- */
+  .turn-banner{ font-family:'Courier New',monospace; font-size:12px; color:var(--parchment-dim); margin-bottom:10px; }
+  .turn-banner b{ color:var(--brass-bright); font-size:15px; }
+  .dice-row{ display:flex; gap:10px; align-items:center; margin:10px 0; }
+  .die{ width:44px; height:44px; background:var(--parchment); color:#1b1408; border-radius:6px;
+    display:flex; align-items:center; justify-content:center; font-size:20px; font-weight:bold;
+    font-family:'Courier New',monospace; box-shadow:var(--shadow); }
+  .dice-total{ font-family:'Courier New',monospace; font-size:12px; color:var(--parchment-dim); }
+  .dice-total b{ color:var(--brass-bright); font-size:16px; }
+  .hint{ font-family:'Courier New',monospace; font-size:11px; color:var(--parchment-dim); line-height:1.6; margin-top:8px; }
+  .log{ font-family:'Courier New',monospace; font-size:11px; color:var(--parchment-dim); line-height:1.7;
+    max-height:220px; overflow-y:auto; border-top:1px solid var(--line); padding-top:8px; margin-top:8px; }
+  .log div:last-child{ color:var(--brass-bright); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Cluedo — Virtual Board</h1>
+  <div class="subtitle">STAGE 1 PREVIEW · LOCAL HOT-SEAT · MOVEMENT ENGINE ONLY (no cards yet)</div>
+
+  <!-- SETUP -->
+  <div class="panel setup-gate" id="setupGate">
+    <h2>Start a local test game</h2>
+    <label>Number of players</label>
+    <select id="numPlayers">
+      <option value="3">3 players</option>
+      <option value="4" selected>4 players</option>
+      <option value="5">5 players</option>
+      <option value="6">6 players</option>
+    </select>
+    <div id="nameInputs" style="margin-top:12px;"></div>
+    <button class="block" id="startBtn">Begin</button>
+  </div>
+
+  <!-- GAME -->
+  <div class="layout game-area hidden" id="gameArea">
+    <div class="board-col">
+      <div class="panel">
+        <h2>The Board</h2>
+        <div class="board" id="board"></div>
+      </div>
+    </div>
+    <div class="side-col">
+      <div class="panel">
+        <h2>Turn</h2>
+        <div class="turn-banner">Current turn: <b id="turnName">—</b></div>
+        <div class="dice-row">
+          <div class="die" id="die1">–</div>
+          <div class="die" id="die2">–</div>
+          <div class="dice-total">Total: <b id="diceTotal">–</b></div>
+        </div>
+        <button class="block" id="rollBtn">Roll dice</button>
+        <button class="block secondary" id="passageBtn" style="display:none;">Take secret passage</button>
+        <button class="block secondary" id="endTurnBtn" disabled>End turn</button>
+        <div class="hint" id="hintText">Roll the dice, then click a highlighted square to move.</div>
+      </div>
+      <div class="panel">
+        <h2>Log</h2>
+        <div class="log" id="logBox"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  // ---------- Board data model ----------
+  // 5x5 grid. Rooms sit at even row/col, hallway connector squares at the
+  // odd positions between two adjacent rooms. The 4 odd/odd cells are unused (board centre).
+  const ROOMS = {
+    kitchen:      {name:"Kitchen",       r:0, c:0},
+    ballroom:     {name:"Ballroom",      r:0, c:2},
+    conservatory: {name:"Conservatory",  r:0, c:4},
+    diningroom:   {name:"Dining Room",   r:2, c:0},
+    library:      {name:"Library",       r:2, c:2},
+    billiard:     {name:"Billiard Room", r:2, c:4},
+    lounge:       {name:"Lounge",        r:4, c:0},
+    hall:         {name:"Hall",          r:4, c:2},
+    study:        {name:"Study",         r:4, c:4},
+  };
+
+  const HALLWAYS = {
+    "kitchen-ballroom":      {r:0, c:1, a:"kitchen", b:"ballroom"},
+    "ballroom-conservatory": {r:0, c:3, a:"ballroom", b:"conservatory"},
+    "diningroom-library":    {r:2, c:1, a:"diningroom", b:"library"},
+    "library-billiard":      {r:2, c:3, a:"library", b:"billiard"},
+    "lounge-hall":           {r:4, c:1, a:"lounge", b:"hall"},
+    "hall-study":            {r:4, c:3, a:"hall", b:"study"},
+    "kitchen-diningroom":    {r:1, c:0, a:"kitchen", b:"diningroom"},
+    "ballroom-library":      {r:1, c:2, a:"ballroom", b:"library"},
+    "conservatory-billiard": {r:1, c:4, a:"conservatory", b:"billiard"},
+    "diningroom-lounge":     {r:3, c:0, a:"diningroom", b:"lounge"},
+    "library-hall":          {r:3, c:2, a:"library", b:"hall"},
+    "billiard-study":        {r:3, c:4, a:"billiard", b:"study"},
+  };
+
+  const SECRET_PASSAGES = { kitchen:"study", study:"kitchen", conservatory:"lounge", lounge:"conservatory" };
+
+  // Build adjacency graph: room <-> hallway <-> room, edge weight 1 each way.
+  const ADJ = {};
+  Object.keys(ROOMS).forEach(id => ADJ[id] = []);
+  Object.keys(HALLWAYS).forEach(id => ADJ[id] = []);
+  Object.entries(HALLWAYS).forEach(([hid, h]) => {
+    ADJ[hid].push(h.a, h.b);
+    ADJ[h.a].push(hid);
+    ADJ[h.b].push(hid);
+  });
+  function isRoom(id){ return !!ROOMS[id]; }
+
+  // Starting squares: cycle players around the 12 hallway nodes.
+  const START_SQUARES = Object.keys(HALLWAYS);
+
+  const TOKEN_COLORS = ["#c25a5a","#6fae80","#7aa8d9","#d9b571","#b07ad9","#d97757"];
+
+  // ---------- Game state ----------
+  let players = [];      // {name, color, pos}
+  let turnIdx = 0;
+  let diceTotal = null;
+  let rolledThisTurn = false;
+  let reachable = new Set();
+
+  function log(msg){
+    const box = document.getElementById("logBox");
+    const d = document.createElement("div");
+    d.textContent = msg;
+    box.appendChild(d);
+    box.scrollTop = box.scrollHeight;
+  }
+
+  // ---------- Setup screen ----------
+  const numPlayersSel = document.getElementById("numPlayers");
+  function renderNameInputs(){
+    const n = parseInt(numPlayersSel.value, 10);
+    const wrap = document.getElementById("nameInputs");
+    wrap.innerHTML = "";
+    for(let i=0;i<n;i++){
+      const row = document.createElement("div");
+      row.style.marginBottom = "8px";
+      const lab = document.createElement("label");
+      lab.textContent = "Player " + (i+1) + " name";
+      const inp = document.createElement("input");
+      inp.type = "text"; inp.id = "pname"+i; inp.placeholder = "Player " + (i+1);
+      row.appendChild(lab); row.appendChild(inp);
+      wrap.appendChild(row);
+    }
+  }
+  numPlayersSel.addEventListener("change", renderNameInputs);
+  renderNameInputs();
+
+  document.getElementById("startBtn").addEventListener("click", () => {
+    const n = parseInt(numPlayersSel.value, 10);
+    players = [];
+    for(let i=0;i<n;i++){
+      const inp = document.getElementById("pname"+i);
+      const name = (inp.value || "").trim() || ("Player " + (i+1));
+      players.push({ name, color: TOKEN_COLORS[i % TOKEN_COLORS.length], pos: START_SQUARES[i % START_SQUARES.length] });
+    }
+    turnIdx = 0;
+    document.getElementById("setupGate").classList.add("hidden");
+    document.getElementById("gameArea").classList.remove("hidden");
+    buildBoardDOM();
+    renderBoard();
+    startTurn();
+  });
+
+  // ---------- Board rendering ----------
+  function buildBoardDOM(){
+    const board = document.getElementById("board");
+    board.innerHTML = "";
+    // create empty 5x5 grid of divs, then fill in rooms / hallways / centre-empties
+    const cellByPos = {};
+    for(let r=0;r<5;r++){
+      for(let c=0;c<5;c++){
+        const div = document.createElement("div");
+        div.className = "cell empty";
+        div.style.gridRow = (r+1);
+        div.style.gridColumn = (c+1);
+        board.appendChild(div);
+        cellByPos[r+"-"+c] = div;
+      }
+    }
+    Object.entries(ROOMS).forEach(([id, room]) => {
+      const div = cellByPos[room.r+"-"+room.c];
+      div.className = "cell room";
+      div.dataset.id = id;
+      const nm = document.createElement("div");
+      nm.className = "name";
+      nm.textContent = room.name;
+      div.appendChild(nm);
+      if (SECRET_PASSAGES[id]){
+        const pb = document.createElement("div");
+        pb.className = "passage-btn";
+        pb.textContent = "↔ " + ROOMS[SECRET_PASSAGES[id]].name;
+        div.appendChild(pb);
+      }
+      const tok = document.createElement("div");
+      tok.className = "tokens";
+      div.appendChild(tok);
+      div.addEventListener("click", () => onCellClick(id));
+    });
+    Object.entries(HALLWAYS).forEach(([id, h]) => {
+      const div = cellByPos[h.r+"-"+h.c];
+      div.className = "cell hallway";
+      div.dataset.id = id;
+      const tok = document.createElement("div");
+      tok.className = "tokens";
+      div.appendChild(tok);
+      div.addEventListener("click", () => onCellClick(id));
+    });
+  }
+
+  function renderBoard(){
+    // clear reachable highlight + tokens
+    document.querySelectorAll(".cell").forEach(el => {
+      el.classList.remove("reachable");
+      const tok = el.querySelector(".tokens");
+      if (tok) tok.innerHTML = "";
+    });
+    players.forEach((p, i) => {
+      const cell = document.querySelector('.cell[data-id="'+p.pos+'"]');
+      if (!cell) return;
+      const tok = cell.querySelector(".tokens");
+      const t = document.createElement("div");
+      t.className = "token";
+      t.style.background = p.color;
+      t.title = p.name;
+      t.textContent = p.name.slice(0,2).toUpperCase();
+      tok.appendChild(t);
+    });
+    reachable.forEach(id => {
+      const cell = document.querySelector('.cell[data-id="'+id+'"]');
+      if (cell) cell.classList.add("reachable");
+    });
+  }
+
+  // ---------- Movement logic ----------
+  // BFS from start up to `steps`. Rooms are terminal (can land on them at any
+  // distance <= steps, but movement does not continue past a room).
+  function computeReachable(start, steps){
+    const dist = { [start]: 0 };
+    const queue = [start];
+    const dest = new Set();
+    let qi = 0;
+    while(qi < queue.length){
+      const node = queue[qi++];
+      const d = dist[node];
+      if (d > 0) dest.add(node);
+      if (isRoom(node) && node !== start) continue; // stop expanding past a room
+      if (d === steps) continue;
+      (ADJ[node] || []).forEach(nb => {
+        const nd = d + 1;
+        if (nd <= steps && (dist[nb] === undefined || dist[nb] > nd)){
+          dist[nb] = nd;
+          queue.push(nb);
+        }
+      });
+    }
+    return dest;
+  }
+
+  // ---------- Turn flow ----------
+  function currentPlayer(){ return players[turnIdx]; }
+
+  function startTurn(){
+    diceTotal = null; rolledThisTurn = false; reachable = new Set();
+    document.getElementById("die1").textContent = "–";
+    document.getElementById("die2").textContent = "–";
+    document.getElementById("diceTotal").textContent = "–";
+    document.getElementById("turnName").textContent = currentPlayer().name;
+    document.getElementById("rollBtn").disabled = false;
+    document.getElementById("endTurnBtn").disabled = true;
+    const passageBtn = document.getElementById("passageBtn");
+    const cp = currentPlayer();
+    if (isRoom(cp.pos) && SECRET_PASSAGES[cp.pos]){
+      passageBtn.style.display = "block";
+      passageBtn.textContent = "Take secret passage → " + ROOMS[SECRET_PASSAGES[cp.pos]].name;
+    } else {
+      passageBtn.style.display = "none";
+    }
+    document.getElementById("hintText").textContent = "Roll the dice, then click a highlighted square to move.";
+    renderBoard();
+  }
+
+  document.getElementById("rollBtn").addEventListener("click", () => {
+    const d1 = 1 + Math.floor(Math.random()*6);
+    const d2 = 1 + Math.floor(Math.random()*6);
+    diceTotal = d1 + d2;
+    document.getElementById("die1").textContent = d1;
+    document.getElementById("die2").textContent = d2;
+    document.getElementById("diceTotal").textContent = diceTotal;
+    document.getElementById("rollBtn").disabled = true;
+    document.getElementById("passageBtn").style.display = "none";
+    reachable = computeReachable(currentPlayer().pos, diceTotal);
+    if (reachable.size === 0){
+      document.getElementById("hintText").textContent = "No square is reachable this roll — end your turn.";
+      document.getElementById("endTurnBtn").disabled = false;
+    } else {
+      document.getElementById("hintText").textContent = "Rolled " + diceTotal + ". Click a highlighted square to move there.";
+    }
+    log(currentPlayer().name + " rolled " + d1 + " + " + d2 + " = " + diceTotal + ".");
+    renderBoard();
+  });
+
+  document.getElementById("passageBtn").addEventListener("click", () => {
+    const cp = currentPlayer();
+    const dest = SECRET_PASSAGES[cp.pos];
+    if (!dest) return;
+    log(cp.name + " slipped through the secret passage from " + ROOMS[cp.pos].name + " to " + ROOMS[dest].name + ".");
+    cp.pos = dest;
+    reachable = new Set();
+    document.getElementById("rollBtn").disabled = true;
+    document.getElementById("passageBtn").style.display = "none";
+    document.getElementById("endTurnBtn").disabled = false;
+    document.getElementById("hintText").textContent = "Moved via secret passage. End your turn.";
+    renderBoard();
+  });
+
+  function onCellClick(id){
+    if (!reachable.has(id)) return;
+    const cp = currentPlayer();
+    const wasRoom = isRoom(cp.pos);
+    cp.pos = id;
+    reachable = new Set();
+    document.getElementById("endTurnBtn").disabled = false;
+    document.getElementById("passageBtn").style.display = "none";
+    const label = isRoom(id) ? ROOMS[id].name : "the hallway";
+    log(cp.name + " moved to " + label + ".");
+    document.getElementById("hintText").textContent = isRoom(id)
+      ? "Entered " + ROOMS[id].name + " — movement ends here. (Suggestions come in stage 2.)"
+      : "Stopped in the hallway. End your turn.";
+    renderBoard();
+  }
+
+  document.getElementById("endTurnBtn").addEventListener("click", () => {
+    turnIdx = (turnIdx + 1) % players.length;
+    startTurn();
+  });
+})();
+</script>
+</body>
+</html>
