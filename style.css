@@ -15,6 +15,7 @@ body{
 h1{ font-family:'Palatino Linotype',Georgia,serif; font-size:22px; color:var(--parchment);
     border-bottom:2px solid var(--brass); padding-bottom:10px; margin:0 0 4px; }
 .subtitle{ font-family:'Courier New',monospace; font-size:11px; color:var(--parchment-dim); letter-spacing:.06em; margin-bottom:18px; }
+.room-badge{ font-family:'Courier New',monospace; font-size:12px; color:var(--brass-bright); margin-bottom:14px; letter-spacing:.05em; }
 .hidden{ display:none !important; }
 
 .layout{ display:flex; gap:20px; flex-wrap:wrap; align-items:flex-start; }

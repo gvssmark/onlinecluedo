@@ -21,7 +21,7 @@ const db = getDatabase(fbApp);
 const auth = getAuth(fbApp);
 
 // Bump this on every future update so it's obvious in the UI that GitHub Pages served the new build.
-const BUILD_VERSION = 7;
+const BUILD_VERSION = 8;
 document.getElementById("appTitle").textContent = "Cluedo Online " + BUILD_VERSION;
 
 let myUid = null;
@@ -31,6 +31,8 @@ let unsubscribeRoom = null;
 let roomState = null; // last snapshot value from DB
 let retired = false;
 let isCreatorSession = false;
+let authReadyResolve;
+const authReady = new Promise(res => { authReadyResolve = res; });
 
 // Family allowlist for room *creation* only — joining a room never needs this.
 // Source file had commas in place of dots (export artifact); normalized here.
@@ -139,10 +141,80 @@ function genRoomCode(){
   return s;
 }
 
+// ---------- Session persistence (rejoin after accidental close) ----------
+function saveSessionPointer(code, role){
+  localStorage.setItem("cluedoActiveRoom", JSON.stringify({ roomCode: code, role, ts: Date.now() }));
+}
+function clearSessionPointer(){
+  localStorage.removeItem("cluedoActiveRoom");
+}
+function cacheRoomData(){
+  if (!roomCode || !myUid) return;
+  const hand = (roomState.hands || {})[myUid] || [];
+  const log = roomState.log || [];
+  try{
+    localStorage.setItem("cluedoCache_" + roomCode + "_" + myUid, JSON.stringify({ hand, log }));
+  } catch(e){ /* storage full or unavailable — non-critical */ }
+}
+function renderFromCache(code, uid){
+  try{
+    const raw = localStorage.getItem("cluedoCache_" + code + "_" + uid);
+    if (!raw) return;
+    const cached = JSON.parse(raw);
+    const grid = document.createElement("div");
+    grid.className = "card-grid";
+    (cached.hand || []).forEach(card => {
+      const chip = document.createElement("div");
+      chip.className = "card-chip cat-" + catOf(card);
+      chip.textContent = card;
+      grid.appendChild(chip);
+    });
+    document.getElementById("handContent").innerHTML = "";
+    document.getElementById("handContent").appendChild(grid);
+    const box = document.getElementById("logBox");
+    box.innerHTML = "";
+    (cached.log || []).forEach(e => {
+      const d = document.createElement("div");
+      d.textContent = e.msg;
+      box.appendChild(d);
+    });
+    box.scrollTop = box.scrollHeight;
+  } catch(e){ /* ignore malformed cache */ }
+}
+
+async function tryShowResumePanel(){
+  const raw = localStorage.getItem("cluedoActiveRoom");
+  if (!raw) return;
+  let saved;
+  try{ saved = JSON.parse(raw); } catch(e){ clearSessionPointer(); return; }
+  if (!saved || !saved.roomCode) return;
+  document.getElementById("resumePanel").classList.remove("hidden");
+  document.getElementById("resumeCode").textContent = saved.roomCode;
+  document.getElementById("resumeBtn").addEventListener("click", async () => {
+    await authReady;
+    if (!myUid){
+      setLandingStatus("Could not restore your session — please Create or Join again.");
+      return;
+    }
+    isCreatorSession = saved.role === "creator";
+    roomCode = saved.roomCode;
+    document.getElementById("resumePanel").classList.add("hidden");
+    renderFromCache(roomCode, myUid);
+    watchRoom();
+  }, { once: true });
+  document.getElementById("dismissResumeBtn").addEventListener("click", () => {
+    clearSessionPointer();
+    document.getElementById("resumePanel").classList.add("hidden");
+  }, { once: true });
+}
+tryShowResumePanel();
+
 // ---------- Auth ----------
 // No eager anonymous sign-in on load: Create uses Google auth, Join uses lazy anonymous auth.
+let authReadyFired = false;
 onAuthStateChanged(auth, (user) => {
   if (user && !isCreatorSession) myUid = user.uid;
+  if (!authReadyFired){ authReadyFired = true; authReadyResolve(); }
 });
 function ensureAnonAuthed(cb){
   if (myUid && !isCreatorSession){ cb(); return; }
@@ -207,6 +279,7 @@ document.getElementById("createBtn").addEventListener("click", async () => {
   };
   await set(ref(db, "rooms/" + code), initial);
   roomCode = code;
+  saveSessionPointer(code, "creator");
   watchRoom();
 });
 
@@ -220,12 +293,17 @@ document.getElementById("joinBtn").addEventListener("click", () => {
     const snap = await get(ref(db, "rooms/" + code));
     if (!snap.exists()){ setLandingStatus("No room with that code."); return; }
     const room = snap.val();
-    if (room.status !== "lobby"){ setLandingStatus("That game has already started."); return; }
     const existing = room.players || {};
     if (existing[myUid]){
-      // rejoining same browser/tab
-      myName = existing[myUid].name; roomCode = code; watchRoom(); return;
+      // reconnecting as ourselves — allowed even if the game is already in progress
+      myName = existing[myUid].name;
+      roomCode = code;
+      saveSessionPointer(code, "player");
+      renderFromCache(roomCode, myUid);
+      watchRoom();
+      return;
     }
+    if (room.status !== "lobby"){ setLandingStatus("That game has already started."); return; }
     const seat = Object.keys(existing).length;
     if (seat >= room.numPlayers){ setLandingStatus("That room is already full."); return; }
     myName = name;
@@ -236,6 +314,7 @@ document.getElementById("joinBtn").addEventListener("click", () => {
       order,
     });
     roomCode = code;
+    saveSessionPointer(code, "player");
     watchRoom();
   });
 });
@@ -245,6 +324,9 @@ function setLandingStatus(msg){ document.getElementById("landingStatus").textCon
 // ---------- Watch room state ----------
 function watchRoom(){
   document.getElementById("landingPanel").classList.add("hidden");
+  document.getElementById("resumePanel").classList.add("hidden");
+  document.getElementById("roomBadge").classList.remove("hidden");
+  document.getElementById("roomBadgeCode").textContent = roomCode;
   unsubscribeRoom = onValue(ref(db, "rooms/" + roomCode), (snap) => {
     roomState = snap.val();
     if (!roomState || retired) return;
@@ -254,6 +336,14 @@ function watchRoom(){
 
 function render(){
   if (!roomState) return;
+  if (roomState.status === "ended_by_host"){
+    clearSessionPointer();
+    document.getElementById("lobbyPanel").classList.add("hidden");
+    document.getElementById("gameArea").classList.add("hidden");
+    document.getElementById("hostEndedPanel").classList.remove("hidden");
+    if (unsubscribeRoom) unsubscribeRoom();
+    return;
+  }
   if (roomState.status === "lobby"){
     document.getElementById("lobbyPanel").classList.remove("hidden");
     document.getElementById("gameArea").classList.add("hidden");
@@ -305,8 +395,10 @@ function renderLobby(){
   }
   const have = order.length, need = roomState.numPlayers;
   const startBtn = document.getElementById("startGameBtn");
+  const endBtn = document.getElementById("endGameLobbyBtn");
   const hint = document.getElementById("lobbyHint");
   if (amHost){
+    endBtn.style.display = "block";
     if (have >= need){
       startBtn.style.display = "block";
       hint.textContent = "Everyone's in — reorder above if you like, then start.";
@@ -316,6 +408,7 @@ function renderLobby(){
     }
   } else {
     startBtn.style.display = "none";
+    endBtn.style.display = "none";
     hint.textContent = have >= need ? "Waiting for the host to start the game." :
       "Waiting for " + (need - have) + " more player(s), then the host will start.";
   }
@@ -341,11 +434,20 @@ document.getElementById("transferHostBtn").addEventListener("click", async () =>
   if (!targetUid) return;
   await update(roomRef(""), { hostUid: targetUid });
   retired = true;
+  clearSessionPointer();
   if (unsubscribeRoom) unsubscribeRoom();
   document.getElementById("lobbyPanel").classList.add("hidden");
   document.getElementById("gameArea").classList.add("hidden");
   document.getElementById("retiredPanel").classList.remove("hidden");
 });
+
+async function endGameForEveryone(){
+  if (myUid !== roomState.hostUid) return;
+  if (!confirm("End the game for everyone? This can't be undone.")) return;
+  await update(roomRef(""), { status: "ended_by_host", endedAt: Date.now() });
+}
+document.getElementById("endGameLobbyBtn").addEventListener("click", endGameForEveryone);
+document.getElementById("endGameBtn").addEventListener("click", endGameForEveryone);
 
 async function reorderPlayers(fromIdx, toIdx){
   const order = roomState.order.slice();
@@ -482,6 +584,7 @@ function renderGame(){
   renderHand();
   renderNotebook();
   renderLog();
+  cacheRoomData();
   handlePendingSuggestion(roomState.pendingSuggestion || null);
   handlePublicKnowledge();
 }
@@ -516,6 +619,8 @@ function renderLog(){
 }
 
 function renderControls(){
+  const endGameBtn = document.getElementById("endGameBtn");
+  endGameBtn.classList.toggle("hidden", myUid !== roomState.hostUid);
   if (myUid === roomState.creatorUid && !roomState.players[myUid]){
     ["rollBtn","suggestBtn","accuseBtn","endTurnBtn"].forEach(id => document.getElementById(id).disabled = true);
     document.getElementById("passageBtn").style.display = "none";
@@ -611,7 +716,32 @@ document.getElementById("downloadLogBtn").addEventListener("click", () => {
   const entries = roomState ? (roomState.log || []) : [];
   const lines = entries.map(e => "[" + new Date(e.ts).toLocaleTimeString() + "] " + e.msg);
   const header = "Cluedo Online build " + BUILD_VERSION + " — room " + roomCode + " — exported " + new Date().toLocaleString();
-  const text = header + "\n" + "-".repeat(header.length) + "\n" + lines.join("\n") + "\n";
+  let text = header + "\n" + "-".repeat(header.length) + "\n" + lines.join("\n") + "\n";
+
+  // ---- TEMP DEBUG SECTION — remove once the log alone is enough to diagnose issues ----
+  if (roomState){
+    text += "\n\n===== DEBUG DATA (temporary — remove later) =====\n";
+    text += "Rule mode: " + roomState.ruleMode + "\n";
+    text += "Envelope (solution): " + JSON.stringify(roomState.envelope) + "\n";
+    text += "Turn order: " + (roomState.order||[]).map(uid => (roomState.players[uid]||{}).name).join(" -> ") + "\n";
+    text += "Current turn index: " + roomState.turnIndex + "\n\n";
+    text += "Hands:\n";
+    (roomState.order||[]).forEach(uid => {
+      const p = roomState.players[uid] || {};
+      const hand = (roomState.hands||{})[uid] || [];
+      text += "  " + p.name + ": " + hand.join(", ") + "\n";
+    });
+    text += "\nPositions:\n";
+    (roomState.order||[]).forEach(uid => {
+      const p = roomState.players[uid] || {};
+      text += "  " + p.name + ": " + ((roomState.positions||{})[uid] || "—") + "\n";
+    });
+    if (roomState.pendingSuggestion){
+      text += "\nPending suggestion (in progress): " + JSON.stringify(roomState.pendingSuggestion) + "\n";
+    }
+  }
+  // ---- END TEMP DEBUG SECTION ----
+
   const blob = new Blob([text], { type: "text/plain" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");

@@ -9,9 +9,16 @@
 <body>
 <div class="wrap">
   <h1 id="appTitle">Cluedo Online</h1>
+  <div class="room-badge hidden" id="roomBadge">Room: <b id="roomBadgeCode">—</b></div>
   <div class="subtitle">REMOTE · STAGE A — LOBBY, DEALING, BOARD &amp; MOVEMENT (suggestions land next)</div>
 
   <!-- LANDING -->
+  <div class="panel hidden" id="resumePanel">
+    <h2>Resume a game</h2>
+    <div class="room-code" id="resumeCode">—</div>
+    <button class="block" id="resumeBtn">Rejoin this room</button>
+    <button class="block secondary" id="dismissResumeBtn">Start fresh instead</button>
+  </div>
   <div class="panel" id="landingPanel">
     <div class="tabs">
       <button class="tab-btn active" id="tabCreate">Create room</button>
@@ -52,6 +59,10 @@
   </div>
 
   <!-- LOBBY -->
+  <div class="panel hidden" id="hostEndedPanel">
+    <h2>Game ended</h2>
+    <p style="font-family:'Courier New',monospace;font-size:12px;color:var(--parchment-dim);">The host ended this game for everyone. Thanks for playing!</p>
+  </div>
   <div class="panel hidden" id="retiredPanel">
     <h2>Hosting transferred</h2>
     <p style="font-family:'Courier New',monospace;font-size:12px;color:var(--parchment-dim);">You've handed off hosting — the family can keep playing without you. You can close this tab.</p>
@@ -71,6 +82,7 @@
     </div>
     <div class="hint" id="lobbyHint"></div>
     <button class="block" id="startGameBtn" style="display:none;">Start game</button>
+    <button class="block secondary" id="endGameLobbyBtn" style="display:none;margin-top:10px;">End game for everyone</button>
   </div>
 
   <!-- GAME -->
@@ -100,6 +112,7 @@
         <button class="block secondary" id="suggestBtn" disabled>Make a suggestion</button>
         <button class="block secondary" id="accuseBtn" disabled>Make an accusation</button>
         <button class="block secondary" id="endTurnBtn" disabled>End turn</button>
+        <button class="block secondary hidden" id="endGameBtn" style="margin-top:10px;">End game for everyone</button>
         <div class="hint" id="hintText">Waiting for your turn.</div>
       </div>
       <div class="panel">
