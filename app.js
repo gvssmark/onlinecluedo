@@ -229,6 +229,7 @@ function renderLobby(){
   list.innerHTML = "";
   const players = roomState.players || {};
   const order = roomState.order || Object.keys(players);
+  const amHost = myUid === roomState.hostUid;
   order.forEach((uid, i) => {
     const p = players[uid];
     if (!p) return;
@@ -236,15 +237,36 @@ function renderLobby(){
     row.className = "lobby-row";
     row.innerHTML = '<div class="swatch" style="background:'+p.color+'"></div><div>'+(i+1)+'. '+p.name+'</div>' +
       (uid === roomState.hostUid ? '<div class="host-tag">HOST</div>' : '');
+    if (amHost && order.length > 1){
+      const arrows = document.createElement("div");
+      arrows.className = "order-arrows";
+      const upBtn = document.createElement("button");
+      upBtn.textContent = "↑"; upBtn.disabled = i === 0;
+      upBtn.addEventListener("click", () => reorderPlayers(i, i-1));
+      const downBtn = document.createElement("button");
+      downBtn.textContent = "↓"; downBtn.disabled = i === order.length-1;
+      downBtn.addEventListener("click", () => reorderPlayers(i, i+1));
+      arrows.appendChild(upBtn); arrows.appendChild(downBtn);
+      row.appendChild(arrows);
+    }
     list.appendChild(row);
   });
+  const orderHint = document.getElementById("lobbyOrderHint");
+  const shuffleBtn = document.getElementById("shuffleOrderBtn");
+  if (amHost && order.length > 1){
+    orderHint.style.display = "block";
+    shuffleBtn.classList.remove("hidden");
+  } else {
+    orderHint.style.display = "none";
+    shuffleBtn.classList.add("hidden");
+  }
   const have = order.length, need = roomState.numPlayers;
   const startBtn = document.getElementById("startGameBtn");
   const hint = document.getElementById("lobbyHint");
-  if (myUid === roomState.hostUid){
+  if (amHost){
     if (have >= need){
       startBtn.style.display = "block";
-      hint.textContent = "Everyone's in — start whenever you're ready.";
+      hint.textContent = "Everyone's in — reorder above if you like, then start.";
     } else {
       startBtn.style.display = "none";
       hint.textContent = "Waiting for " + (need - have) + " more player(s) to join with the code above.";
@@ -255,6 +277,19 @@ function renderLobby(){
       "Waiting for " + (need - have) + " more player(s), then the host will start.";
   }
 }
+
+async function reorderPlayers(fromIdx, toIdx){
+  const order = roomState.order.slice();
+  const [moved] = order.splice(fromIdx, 1);
+  order.splice(toIdx, 0, moved);
+  await update(roomRef(""), { order });
+}
+
+document.getElementById("shuffleOrderBtn").addEventListener("click", async () => {
+  if (myUid !== roomState.hostUid) return;
+  const order = shuffle(roomState.order);
+  await update(roomRef(""), { order });
+});
 
 document.getElementById("startGameBtn").addEventListener("click", async () => {
   const order = roomState.order;

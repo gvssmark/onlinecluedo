@@ -55,6 +55,9 @@ button.secondary{ background:transparent; color:var(--brass-bright); border:1px 
 .lobby-row{ display:flex; align-items:center; gap:8px; padding:6px 0; font-family:'Courier New',monospace; font-size:13px; }
 .lobby-row .swatch{ width:14px; height:14px; border-radius:50%; border:2px solid rgba(255,255,255,.5); }
 .lobby-row .host-tag{ color:var(--brass-bright); font-size:10px; margin-left:auto; }
+.lobby-row .order-arrows{ display:flex; gap:3px; margin-left:auto; }
+.lobby-row .order-arrows button{ padding:2px 7px; font-size:11px; }
+.lobby-row .host-tag{ margin-left:8px; }
 
 /* ---- Board grid ---- */
 .board{
