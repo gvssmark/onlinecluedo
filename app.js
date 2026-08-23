@@ -21,7 +21,7 @@ const db = getDatabase(fbApp);
 const auth = getAuth(fbApp);
 
 // Bump this on every future update so it's obvious in the UI that GitHub Pages served the new build.
-const BUILD_VERSION = 11;
+const BUILD_VERSION = 12;
 document.getElementById("appTitle").textContent = "Cluedo Online " + BUILD_VERSION;
 
 let myUid = null;
@@ -795,11 +795,38 @@ function renderHand(){
 }
 
 // ---------- Notebook ----------
+function computeDeducedEnvelope(nb, order){
+  const myHand = (roomState.hands || {})[myUid] || [];
+  const deduced = {}; // card -> true
+  CATS.forEach(cat => {
+    cat.cards.forEach(card => {
+      if (myHand.includes(card)) return; // I hold it — definitely not the envelope, nothing to deduce
+      const allOthersRuledOut = order.every(uid => {
+        if (uid === myUid) return true; // covered by the hand check above
+        return nb[card] && nb[card][uid] === "auto-no";
+      });
+      if (allOthersRuledOut) deduced[card] = true;
+    });
+  });
+  return deduced;
+}
+
 function renderNotebook(){
   const content = document.getElementById("nbContent");
   const nb = (roomState.notebooks || {})[myUid];
   if (!nb){ content.innerHTML = ""; return; }
   const order = roomState.order;
+  const deduced = computeDeducedEnvelope(nb, order);
+  const deducedCards = Object.keys(deduced);
+  if (deducedCards.length){
+    const banner = document.createElement("div");
+    banner.className = "deduction-banner";
+    banner.textContent = "Deduced from elimination — must be in the envelope: " + deducedCards.join(", ");
+    content.innerHTML = "";
+    content.appendChild(banner);
+  } else {
+    content.innerHTML = "";
+  }
   const table = document.createElement("table");
   table.className = "notebook-table";
   const thead = document.createElement("tr");
@@ -808,7 +835,9 @@ function renderNotebook(){
   CATS.forEach(cat => {
     cat.cards.forEach(card => {
       const tr = document.createElement("tr");
-      const tdName = document.createElement("td"); tdName.className = "cardname"; tdName.textContent = card;
+      const tdName = document.createElement("td");
+      tdName.className = "cardname" + (deduced[card] ? " deduced" : "");
+      tdName.textContent = card + (deduced[card] ? " ★" : "");
       tr.appendChild(tdName);
       order.forEach(uid => {
         const td = document.createElement("td");
@@ -828,11 +857,10 @@ function renderNotebook(){
       table.appendChild(tr);
     });
   });
-  content.innerHTML = "";
   content.appendChild(table);
   const legend = document.createElement("div");
   legend.className = "nb-legend";
-  legend.innerHTML = "● have &nbsp; ✓ shown to you &nbsp; – known not held. Click a blank cell to mark your own guess.";
+  legend.innerHTML = "● have &nbsp; ✓ shown to you &nbsp; – known not held &nbsp; ★ deduced envelope card. Click a blank cell to mark your own guess.";
   content.appendChild(legend);
 }
 
@@ -841,6 +869,15 @@ const overlay = document.getElementById("modalOverlay");
 const modalBox = document.getElementById("modalBox");
 function showModal(html){ modalBox.innerHTML = html; overlay.classList.add("open"); }
 function closeModal(){ overlay.classList.remove("open"); modalBox.innerHTML = ""; }
+
+let toastTimer = null;
+function showToast(msg){
+  const el = document.getElementById("toast");
+  el.textContent = msg;
+  el.classList.add("show");
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.classList.remove("show"); }, 3200);
+}
 
 // ---------- Suggestion (live handshake) ----------
 document.getElementById("suggestBtn").addEventListener("click", () => {
@@ -904,6 +941,7 @@ async function actAsResponder(ps){
   const trio = [ps.suspect, ps.weapon, ps.room];
   const matches = myHand.filter(c => trio.includes(c));
   if (matches.length === 0){
+    showToast(roomState.players[ps.suggester].name + " suggested " + ps.suspect + " / " + ps.weapon + " / " + ps.room + " — you had nothing to show, passed automatically.");
     await pushSuggestionEvent(ps, { by: myUid, matched: false });
     await advanceQueue(ps, false);
     responderModalOpen = false;

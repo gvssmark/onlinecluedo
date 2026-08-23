@@ -124,6 +124,14 @@ button.secondary{ background:transparent; color:var(--brass-bright); border:1px 
 .nb-cell.manual-yes{ background:rgba(111,174,128,.55); color:#fff; font-weight:bold; }
 .nb-cell.manual-no{ background:rgba(154,59,59,.4); color:#fff; }
 .nb-legend{ font-family:'Courier New',monospace; font-size:10px; color:var(--parchment-dim); margin-top:8px; line-height:1.6; }
+.nb-cell.deduced{ background:rgba(217,181,113,.55) !important; color:#1b1408 !important; font-weight:bold; box-shadow:0 0 0 1px var(--brass-bright) inset; }
+.deduction-banner{ background:rgba(217,181,113,.15); border:1px solid var(--brass-bright); border-radius:4px;
+  padding:8px 10px; margin-bottom:10px; font-family:'Courier New',monospace; font-size:11px; color:var(--brass-bright); }
+
+.toast{ position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:linear-gradient(180deg,var(--ink-2),var(--ink));
+  border:1px solid var(--brass); border-radius:6px; padding:10px 16px; font-family:'Courier New',monospace; font-size:12px;
+  color:var(--parchment); box-shadow:var(--shadow); z-index:70; opacity:0; transition:opacity .2s ease; pointer-events:none; }
+.toast.show{ opacity:1; }
 
 .modal-overlay{ position:fixed; inset:0; background:rgba(0,0,0,.7); display:none;
   align-items:center; justify-content:center; z-index:60; padding:16px; }
