@@ -229,12 +229,12 @@ function renderLobby(){
   list.innerHTML = "";
   const players = roomState.players || {};
   const order = roomState.order || Object.keys(players);
-  order.forEach(uid => {
+  order.forEach((uid, i) => {
     const p = players[uid];
     if (!p) return;
     const row = document.createElement("div");
     row.className = "lobby-row";
-    row.innerHTML = '<div class="swatch" style="background:'+p.color+'"></div><div>'+p.name+'</div>' +
+    row.innerHTML = '<div class="swatch" style="background:'+p.color+'"></div><div>'+(i+1)+'. '+p.name+'</div>' +
       (uid === roomState.hostUid ? '<div class="host-tag">HOST</div>' : '');
     list.appendChild(row);
   });
@@ -363,11 +363,27 @@ function renderGame(){
   }
 
   document.getElementById("turnName").textContent = (roomState.players[currentTurnUid()]||{}).name || "—";
+  renderTurnOrder();
   renderBoardTokens();
   renderControls();
   renderHand();
   renderNotebook();
   renderLog();
+}
+
+function renderTurnOrder(){
+  const list = document.getElementById("turnOrderList");
+  list.innerHTML = "";
+  const order = roomState.order;
+  order.forEach((uid, i) => {
+    const p = roomState.players[uid];
+    if (!p) return;
+    const chip = document.createElement("div");
+    chip.className = "chip" + (i === roomState.turnIndex ? " current" : "");
+    chip.innerHTML = '<div class="swatch" style="background:'+p.color+'"></div><div>'+(i+1)+'. '+p.name+'</div>' +
+      (uid === myUid ? '<div class="you-tag">YOU</div>' : '');
+    list.appendChild(chip);
+  });
 }
 
 function renderLog(){
