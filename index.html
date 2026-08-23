@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Cluedo Online</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+  <h1>Cluedo Online</h1>
+  <div class="subtitle">REMOTE · STAGE A — LOBBY, DEALING, BOARD &amp; MOVEMENT (suggestions land next)</div>
+
+  <!-- LANDING -->
+  <div class="panel" id="landingPanel">
+    <div class="tabs">
+      <button class="tab-btn active" id="tabCreate">Create room</button>
+      <button class="tab-btn" id="tabJoin">Join room</button>
+    </div>
+
+    <div id="createForm">
+      <label>Your name</label>
+      <input type="text" id="createName" placeholder="Your name">
+      <label style="margin-top:10px;">Number of players</label>
+      <select id="createNumPlayers">
+        <option value="3">3 players</option>
+        <option value="4" selected>4 players</option>
+        <option value="5">5 players</option>
+        <option value="6">6 players</option>
+      </select>
+      <label style="margin-top:10px;">Suggestion rule</label>
+      <select id="createRuleMode">
+        <option value="normal">Normal — stop at the first player who can disprove</option>
+        <option value="family">Family — full round; a repeat card may be passed on</option>
+      </select>
+      <button class="block" id="createBtn" style="margin-top:14px;">Create room</button>
+    </div>
+
+    <div id="joinForm" class="hidden">
+      <label>Your name</label>
+      <input type="text" id="joinName" placeholder="Your name">
+      <label style="margin-top:10px;">Room code</label>
+      <input type="text" id="joinCode" placeholder="e.g. FOXY" style="text-transform:uppercase;">
+      <button class="block" id="joinBtn" style="margin-top:14px;">Join room</button>
+    </div>
+    <div class="status-msg" id="landingStatus"></div>
+  </div>
+
+  <!-- LOBBY -->
+  <div class="panel hidden" id="lobbyPanel">
+    <h2>Waiting room</h2>
+    <div class="room-code">Room code: <b id="lobbyCode">—</b></div>
+    <div class="hint">Share this code with your family — they choose "Join room" and enter it.</div>
+    <div id="lobbyPlayerList" class="lobby-list"></div>
+    <div class="hint" id="lobbyHint"></div>
+    <button class="block" id="startGameBtn" style="display:none;">Start game</button>
+  </div>
+
+  <!-- GAME -->
+  <div class="layout hidden" id="gameArea">
+    <div class="board-col">
+      <div class="panel win-banner hidden" id="winBanner">
+        <h2 id="winTitle"></h2>
+        <p id="winBody"></p>
+      </div>
+      <div class="panel">
+        <h2>The Board</h2>
+        <div class="board" id="board"></div>
+      </div>
+    </div>
+    <div class="side-col">
+      <div class="panel">
+        <h2>Turn</h2>
+        <div class="turn-banner">Current turn: <b id="turnName">—</b></div>
+        <div class="dice-row">
+          <div class="die" id="die1">–</div>
+          <div class="die" id="die2">–</div>
+          <div class="dice-total">Total: <b id="diceTotal">–</b></div>
+        </div>
+        <button class="block" id="rollBtn" disabled>Roll dice</button>
+        <button class="block secondary" id="passageBtn" style="display:none;">Take secret passage</button>
+        <button class="block secondary" id="suggestBtn" disabled title="Coming in the next remote stage">Make a suggestion (soon)</button>
+        <button class="block secondary" id="accuseBtn" disabled>Make an accusation</button>
+        <button class="block secondary" id="endTurnBtn" disabled>End turn</button>
+        <div class="hint" id="hintText">Waiting for your turn.</div>
+      </div>
+      <div class="panel">
+        <h2>My Hand</h2>
+        <div id="handContent"></div>
+      </div>
+      <div class="panel">
+        <h2>Notebook</h2>
+        <div id="nbContent"></div>
+      </div>
+      <div class="panel">
+        <h2>Log</h2>
+        <div class="log" id="logBox"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal-box" id="modalBox"></div>
+</div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
