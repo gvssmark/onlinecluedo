@@ -104,7 +104,7 @@ button.secondary{ background:transparent; color:var(--brass-bright); border:1px 
 .dice-total b{ color:var(--brass-bright); font-size:16px; }
 .log{ font-family:'Courier New',monospace; font-size:11px; color:var(--parchment-dim); line-height:1.7;
   max-height:220px; overflow-y:auto; border-top:1px solid var(--line); padding-top:8px; margin-top:8px; }
-.log div:last-child{ color:var(--brass-bright); }
+.log div:first-child{ color:var(--brass-bright); }
 
 .card-grid{ display:grid; grid-template-columns:1fr 1fr; gap:6px; }
 .card-chip{ background:#111823; border:1px solid var(--line); border-radius:4px; padding:6px 8px;

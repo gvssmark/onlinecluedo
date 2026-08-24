@@ -21,7 +21,7 @@ const db = getDatabase(fbApp);
 const auth = getAuth(fbApp);
 
 // Bump this on every future update so it's obvious in the UI that GitHub Pages served the new build.
-const BUILD_VERSION = 12;
+const BUILD_VERSION = 13;
 document.getElementById("appTitle").textContent = "Cluedo Online " + BUILD_VERSION;
 
 let myUid = null;
@@ -610,12 +610,12 @@ function renderLog(){
   if (entries.length === lastLogCount) return;
   const box = document.getElementById("logBox");
   box.innerHTML = "";
-  entries.forEach(e => {
+  entries.slice().reverse().forEach(e => {
     const d = document.createElement("div");
     d.textContent = e.msg;
     box.appendChild(d);
   });
-  box.scrollTop = box.scrollHeight;
+  box.scrollTop = 0;
   lastLogCount = entries.length;
 }
 
@@ -739,12 +739,13 @@ async function pushLog(msg){
 
 document.getElementById("downloadLogBtn").addEventListener("click", () => {
   const entries = roomState ? (roomState.log || []) : [];
-  const lines = entries.map(e => "[" + new Date(e.ts).toLocaleTimeString() + "] " + e.msg);
+  const lines = entries.slice().reverse().map(e => "[" + new Date(e.ts).toLocaleTimeString() + "] " + e.msg);
   const header = "Cluedo Online build " + BUILD_VERSION + " — room " + roomCode + " — exported " + new Date().toLocaleString();
   let text = header + "\n" + "-".repeat(header.length) + "\n" + lines.join("\n") + "\n";
 
-  // ---- TEMP DEBUG SECTION — remove once the log alone is enough to diagnose issues ----
-  if (roomState){
+  // ---- TEMP DEBUG SECTION — only while the game is still in progress; stripped once finalized ----
+  const gameFinalized = roomState && (roomState.status === "ended" || roomState.status === "ended_by_host");
+  if (roomState && !gameFinalized){
     text += "\n\n===== DEBUG DATA (temporary — remove later) =====\n";
     text += "Rule mode: " + roomState.ruleMode + "\n";
     text += "Envelope (solution): " + JSON.stringify(roomState.envelope) + "\n";
@@ -879,17 +880,32 @@ function showToast(msg){
   toastTimer = setTimeout(() => { el.classList.remove("show"); }, 3200);
 }
 
+// Returns a tick prefix for cards the viewer already knows the status of:
+// in their own hand, already shown to them, or logically deduced as the envelope card.
+function cardKnownPrefix(card){
+  const myHand = (roomState.hands || {})[myUid] || [];
+  if (myHand.includes(card)) return "✓ ";
+  const nb = (roomState.notebooks || {})[myUid] || {};
+  const cardNb = nb[card] || {};
+  if (Object.values(cardNb).some(v => v === "auto-shown")) return "✓ ";
+  const order = roomState.order || [];
+  const allOthersRuledOut = order.every(uid => uid === myUid || cardNb[uid] === "auto-no");
+  if (allOthersRuledOut) return "✓ ";
+  return "";
+}
+
 // ---------- Suggestion (live handshake) ----------
 document.getElementById("suggestBtn").addEventListener("click", () => {
   if (!isMyTurn()) return;
   const myPos = roomState.positions[myUid];
   if (!isRoom(myPos)) return;
   const roomName = ROOMS[myPos].name;
-  const suspectOpts = SUSPECTS.map(s => "<option>"+s+"</option>").join("");
-  const weaponOpts = WEAPONS.map(w => "<option>"+w+"</option>").join("");
+  const suspectOpts = SUSPECTS.map(s => "<option value='"+s+"'>"+cardKnownPrefix(s)+s+"</option>").join("");
+  const weaponOpts = WEAPONS.map(w => "<option value='"+w+"'>"+cardKnownPrefix(w)+w+"</option>").join("");
   showModal(
     "<h3>Make a suggestion</h3>" +
     "<p>You suggest it happened in the <b>" + roomName + "</b> with:</p>" +
+    "<p style='font-size:11px;color:#cfc4a8;'>✓ = already known to you (your hand, shown to you, or deduced)</p>" +
     "<label style='display:block;color:#cfc4a8;font-family:monospace;font-size:11px;margin-bottom:4px;'>Suspect</label>" +
     "<select id='sugSuspect' style='width:100%;margin-bottom:10px;padding:8px;background:#111823;color:#ece4d3;border:1px solid #3a475a;border-radius:4px;'>"+suspectOpts+"</select>" +
     "<label style='display:block;color:#cfc4a8;font-family:monospace;font-size:11px;margin-bottom:4px;'>Weapon</label>" +
@@ -1055,7 +1071,8 @@ function handlePublicKnowledge(){
       if (uid === entry.exceptUid) return;
       entry.trio.forEach(card => {
         const cur = myNb[card] && myNb[card][uid];
-        if (!cur) updates["notebooks/" + myUid + "/" + card + "/" + uid] = "auto-no";
+        const isManualOrBlank = !cur || cur === "manual-yes" || cur === "manual-no";
+        if (isManualOrBlank) updates["notebooks/" + myUid + "/" + card + "/" + uid] = "auto-no";
       });
     });
   });

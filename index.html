@@ -21,11 +21,11 @@
   </div>
   <div class="panel" id="landingPanel">
     <div class="tabs">
-      <button class="tab-btn active" id="tabCreate">Create room</button>
-      <button class="tab-btn" id="tabJoin">Join room</button>
+      <button class="tab-btn" id="tabCreate">Create room</button>
+      <button class="tab-btn active" id="tabJoin">Join room</button>
     </div>
 
-    <div id="createForm">
+    <div id="createForm" class="hidden">
       <div id="googleSignInStep">
         <div class="hint">Only approved family members can create a room. Sign in with the Google account on the family list.</div>
         <button class="block" id="googleSignInBtn" style="margin-top:10px;">Sign in with Google</button>
@@ -42,13 +42,13 @@
         <label style="margin-top:10px;">Suggestion rule</label>
         <select id="createRuleMode">
           <option value="normal">Normal — stop at the first player who can disprove</option>
-          <option value="family">Family — full round; a repeat card may be passed on</option>
+          <option value="family" selected>Family — full round; a repeat card may be passed on</option>
         </select>
         <button class="block" id="createBtn" style="margin-top:14px;">Create room</button>
       </div>
     </div>
 
-    <div id="joinForm" class="hidden">
+    <div id="joinForm">
       <label>Your name</label>
       <input type="text" id="joinName" placeholder="Your name">
       <label style="margin-top:10px;">Room code</label>
