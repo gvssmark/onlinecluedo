@@ -21,7 +21,7 @@ const db = getDatabase(fbApp);
 const auth = getAuth(fbApp);
 
 // Bump this on every future update so it's obvious in the UI that GitHub Pages served the new build.
-const BUILD_VERSION = 14;
+const BUILD_VERSION = 15;
 document.getElementById("appTitle").textContent = "Cluedo Online " + BUILD_VERSION;
 
 let myUid = null;
@@ -229,6 +229,39 @@ function rememberName(name){
   if (name) localStorage.setItem("cluedoPlayerName", name);
 }
 
+// ---------- Remembered photo (this device) ----------
+let myPhotoDataUrl = localStorage.getItem("cluedoPlayerPhoto") || null;
+if (myPhotoDataUrl){
+  document.getElementById("photoPreview").innerHTML = "<img src='" + myPhotoDataUrl + "'>";
+}
+document.getElementById("photoInput").addEventListener("change", (e) => {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+  const img = new Image();
+  const reader = new FileReader();
+  reader.onload = () => {
+    img.onload = () => {
+      const size = 80;
+      const canvas = document.createElement("canvas");
+      canvas.width = size; canvas.height = size;
+      const ctx = canvas.getContext("2d");
+      const side = Math.min(img.width, img.height);
+      ctx.drawImage(img, (img.width-side)/2, (img.height-side)/2, side, side, 0, 0, size, size);
+      myPhotoDataUrl = canvas.toDataURL("image/jpeg", 0.6);
+      localStorage.setItem("cluedoPlayerPhoto", myPhotoDataUrl);
+      document.getElementById("photoPreview").innerHTML = "<img src='" + myPhotoDataUrl + "'>";
+    };
+    img.src = reader.result;
+  };
+  reader.readAsDataURL(file);
+});
+
+// Returns an avatar's inner HTML — photo if present, else initials.
+function avatarInnerHtml(p){
+  if (p && p.photo) return "<img src='" + p.photo + "'>";
+  return ((p && p.name) || "?").slice(0,2).toUpperCase();
+}
+
 // ---------- Landing tabs ----------
 document.getElementById("tabCreate").addEventListener("click", () => {
   document.getElementById("tabCreate").classList.add("active");
@@ -310,7 +343,7 @@ document.getElementById("joinBtn").addEventListener("click", () => {
     rememberName(name);
     const order = (room.order || []).concat(myUid);
     await update(ref(db, "rooms/" + code), {
-      ["players/" + myUid]: { name, color: TOKEN_COLORS[seat % TOKEN_COLORS.length], seat },
+      ["players/" + myUid]: { name, color: TOKEN_COLORS[seat % TOKEN_COLORS.length], seat, photo: myPhotoDataUrl || null },
       order,
     });
     roomCode = code;
@@ -334,9 +367,37 @@ function watchRoom(){
   });
 }
 
+function resetForNewRoom(){
+  roomCode = null;
+  retired = false;
+  if (unsubscribeRoom){ unsubscribeRoom(); unsubscribeRoom = null; }
+  roomState = null;
+  document.getElementById("roomBadge").classList.add("hidden");
+  document.getElementById("scrollArea").classList.remove("with-strip");
+  document.getElementById("playerStrip").classList.add("hidden");
+  document.getElementById("cluesRow").classList.add("hidden");
+  document.body.classList.remove("my-turn");
+  wasMyTurn = false;
+  setActiveTab(0);
+  ["lobbyPanel","gameArea","retiredPanel","hostEndedPanel"].forEach(id => document.getElementById(id).classList.add("hidden"));
+  document.getElementById("landingPanel").classList.remove("hidden");
+  document.getElementById("resumePanel").classList.add("hidden");
+  document.getElementById("googleSignInStep").classList.add("hidden");
+  document.getElementById("createSettingsStep").classList.remove("hidden");
+  document.getElementById("tabCreate").classList.add("active");
+  document.getElementById("tabJoin").classList.remove("active");
+  document.getElementById("createForm").classList.remove("hidden");
+  document.getElementById("joinForm").classList.add("hidden");
+}
+["newRoomBtn1","newRoomBtn2","newRoomBtn3"].forEach(id => {
+  document.getElementById(id).addEventListener("click", resetForNewRoom);
+});
+
 function render(){
   if (!roomState) return;
   renderPauseOverlay();
+  document.getElementById("newRoomBtn1").classList.toggle("hidden", !isCreatorSession);
+  document.getElementById("newRoomBtn3").classList.toggle("hidden", !isCreatorSession);
   if (roomState.status === "ended_by_host"){
     clearSessionPointer();
     document.getElementById("lobbyPanel").classList.add("hidden");
@@ -358,6 +419,9 @@ function render(){
 }
 
 function renderLobby(){
+  document.getElementById("scrollArea").classList.remove("with-strip");
+  document.getElementById("playerStrip").classList.add("hidden");
+  document.getElementById("cluesRow").classList.add("hidden");
   document.getElementById("lobbyCode").textContent = roomCode;
   const list = document.getElementById("lobbyPlayerList");
   list.innerHTML = "";
@@ -577,7 +641,7 @@ function renderBoardTokens(){
     const tok = cell.querySelector(".tokens");
     const t = document.createElement("div");
     t.className = "token"; t.style.background = p.color; t.title = p.name;
-    t.textContent = p.name.slice(0,2).toUpperCase();
+    t.innerHTML = avatarInnerHtml(p);
     tok.appendChild(t);
   });
   if (isMyTurn()){
@@ -592,6 +656,10 @@ function currentTurnUid(){ return roomState.order[roomState.turnIndex]; }
 function isMyTurn(){ return currentTurnUid() === myUid && roomState.status === "playing"; }
 
 function renderGame(){
+  document.getElementById("scrollArea").classList.add("with-strip");
+  document.getElementById("playerStrip").classList.remove("hidden");
+  document.getElementById("cluesRow").classList.remove("hidden");
+  renderPlayerStrip();
   if (roomState.status === "ended"){
     document.getElementById("winBanner").classList.remove("hidden");
     document.getElementById("winTitle").textContent = (roomState.players[roomState.winnerUid]||{}).name + " wins!";
@@ -608,10 +676,76 @@ function renderGame(){
   renderHand();
   renderNotebook();
   renderLog();
+  renderCluesRow();
   cacheRoomData();
   handlePendingSuggestion(roomState.pendingSuggestion || null);
   handlePublicKnowledge();
+
+  const nowMyTurn = isMyTurn();
+  if (nowMyTurn && !wasMyTurn){
+    document.body.classList.add("my-turn");
+    setActiveTab(1); // Turn tab
+  } else if (!nowMyTurn){
+    document.body.classList.remove("my-turn");
+  }
+  wasMyTurn = nowMyTurn;
 }
+
+function renderPlayerStrip(){
+  const strip = document.getElementById("playerStrip");
+  strip.innerHTML = "";
+  const cur = currentTurnUid();
+  roomState.order.forEach(uid => {
+    const p = roomState.players[uid];
+    if (!p) return;
+    const av = document.createElement("div");
+    av.className = "player-avatar" + (uid === cur && roomState.status === "playing" ? " current-turn" : "");
+    av.style.borderColor = p.photo ? "var(--brass)" : p.color;
+    av.title = p.name;
+    av.innerHTML = avatarInnerHtml(p);
+    strip.appendChild(av);
+  });
+}
+
+function renderCluesRow(){
+  const row = document.getElementById("cluesRow");
+  const nb = (roomState.notebooks || {})[myUid];
+  if (!nb){ row.textContent = ""; return; }
+  const deduced = computeDeducedEnvelope(nb, roomState.order);
+  const cards = Object.keys(deduced);
+  row.textContent = cards.length ? ("Clues confirmed: " + cards.join(", ")) : "Clues confirmed: none yet";
+}
+
+// ---------- Tabs + swipe ----------
+const TAB_IDS = ["board","turn","hand","notebook","log"];
+let activeTabIndex = 0;
+let wasMyTurn = false;
+function setActiveTab(idx){
+  activeTabIndex = Math.max(0, Math.min(TAB_IDS.length - 1, idx));
+  document.getElementById("tabTrack").style.transform = "translateX(-" + (activeTabIndex * 20) + "%)";
+  document.querySelectorAll(".tab-bar-btn").forEach((b, i) => b.classList.toggle("active", i === activeTabIndex));
+}
+document.querySelectorAll(".tab-bar-btn").forEach((btn, i) => {
+  btn.addEventListener("click", () => setActiveTab(i));
+});
+(function setupSwipe(){
+  const vp = document.getElementById("tabViewport");
+  let startX = null, startY = null, dragging = false;
+  vp.addEventListener("touchstart", (e) => {
+    startX = e.touches[0].clientX; startY = e.touches[0].clientY; dragging = true;
+  }, { passive: true });
+  vp.addEventListener("touchend", (e) => {
+    if (!dragging || startX === null) return;
+    dragging = false;
+    const dx = e.changedTouches[0].clientX - startX;
+    const dy = e.changedTouches[0].clientY - startY;
+    if (Math.abs(dx) > 55 && Math.abs(dx) > Math.abs(dy)){
+      if (dx < 0) setActiveTab(activeTabIndex + 1);
+      else setActiveTab(activeTabIndex - 1);
+    }
+    startX = null; startY = null;
+  }, { passive: true });
+})();
 
 function renderTurnOrder(){
   const list = document.getElementById("turnOrderList");
@@ -806,10 +940,12 @@ document.getElementById("downloadLogBtn").addEventListener("click", () => {
 function renderHand(){
   const content = document.getElementById("handContent");
   const hand = (roomState.hands || {})[myUid] || [];
+  const catOrder = { room: 0, suspect: 1, weapon: 2 };
+  const sorted = hand.slice().sort((a, b) => catOrder[catOf(a)] - catOrder[catOf(b)]);
   content.innerHTML = "";
   const grid = document.createElement("div");
   grid.className = "card-grid";
-  hand.forEach(card => {
+  sorted.forEach(card => {
     const chip = document.createElement("div");
     chip.className = "card-chip cat-" + catOf(card);
     chip.textContent = card;
@@ -860,8 +996,12 @@ function renderNotebook(){
     cat.cards.forEach(card => {
       const tr = document.createElement("tr");
       const tdName = document.createElement("td");
-      tdName.className = "cardname" + (deduced[card] ? " deduced" : "");
-      tdName.textContent = card + (deduced[card] ? " ★" : "");
+      const cardNb = nb[card] || {};
+      const isMine = cardNb[myUid] === "auto-have";
+      const isShown = Object.values(cardNb).some(v => v === "auto-shown");
+      const nameClass = isMine ? "card-mine" : isShown ? "card-shown" : deduced[card] ? "card-deduced" : "";
+      tdName.className = "cardname" + (nameClass ? " " + nameClass : "");
+      tdName.textContent = card;
       tr.appendChild(tdName);
       order.forEach(uid => {
         const td = document.createElement("td");
@@ -884,7 +1024,7 @@ function renderNotebook(){
   content.appendChild(table);
   const legend = document.createElement("div");
   legend.className = "nb-legend";
-  legend.innerHTML = "● have &nbsp; ✓ shown to you &nbsp; – known not held &nbsp; ★ deduced envelope card. Click a blank cell to mark your own guess.";
+  legend.innerHTML = "Card name: <span style='color:#8ed3a0'>green</span>=your hand, <span style='color:#e6c98a'>yellow</span>=shown to you, <span style='color:#e08a8a'>red</span>=deduced envelope. Grid: ● have · ✓ shown · – not held. Click a blank cell to mark your own guess.";
   content.appendChild(legend);
 }
 

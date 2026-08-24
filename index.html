@@ -3,14 +3,26 @@
 <head>
 <meta charset="UTF-8">
 <title>Cluedo Online</title>
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
+
+<div class="landscape-block" id="landscapeBlock">
+  <p>Please rotate your device to portrait — Cluedo Online is portrait-only.</p>
+</div>
+
+<div class="fixed-header" id="fixedHeader">
+  <div class="header-row">
+    <h1 id="appTitle">Cluedo Online</h1>
+    <div class="room-badge hidden" id="roomBadge">Room: <b id="roomBadgeCode">—</b></div>
+  </div>
+  <div class="player-strip hidden" id="playerStrip"></div>
+  <div class="clues-row hidden" id="cluesRow"></div>
+</div>
+
+<div class="scroll-area" id="scrollArea">
 <div class="wrap">
-  <h1 id="appTitle">Cluedo Online</h1>
-  <div class="room-badge hidden" id="roomBadge">Room: <b id="roomBadgeCode">—</b></div>
-  <div class="subtitle">REMOTE · STAGE A — LOBBY, DEALING, BOARD &amp; MOVEMENT (suggestions land next)</div>
 
   <!-- LANDING -->
   <div class="panel hidden" id="resumePanel">
@@ -51,6 +63,11 @@
     <div id="joinForm">
       <label>Your name</label>
       <input type="text" id="joinName" placeholder="Your name">
+      <label style="margin-top:10px;">Your photo (optional)</label>
+      <div class="photo-row">
+        <div class="photo-preview" id="photoPreview">?</div>
+        <input type="file" id="photoInput" accept="image/*" capture="user">
+      </div>
       <label style="margin-top:10px;">Room code</label>
       <input type="text" id="joinCode" placeholder="e.g. FOXY" style="text-transform:uppercase;">
       <button class="block" id="joinBtn" style="margin-top:14px;">Join room</button>
@@ -62,10 +79,12 @@
   <div class="panel hidden" id="hostEndedPanel">
     <h2>Game ended</h2>
     <p style="font-family:'Courier New',monospace;font-size:12px;color:var(--parchment-dim);">The host ended this game for everyone. Thanks for playing!</p>
+    <button class="block hidden" id="newRoomBtn1">Create another room</button>
   </div>
   <div class="panel hidden" id="retiredPanel">
     <h2>Hosting transferred</h2>
     <p style="font-family:'Courier New',monospace;font-size:12px;color:var(--parchment-dim);">You've handed off hosting — the family can keep playing without you. You can close this tab.</p>
+    <button class="block" id="newRoomBtn2">Create another room</button>
   </div>
   <div class="panel hidden" id="lobbyPanel">
     <h2>Waiting room</h2>
@@ -85,52 +104,63 @@
     <button class="block secondary" id="endGameLobbyBtn" style="display:none;margin-top:10px;">End game for everyone</button>
   </div>
 
-  <!-- GAME -->
-  <div class="layout hidden" id="gameArea">
-    <div class="board-col">
-      <div class="panel win-banner hidden" id="winBanner">
-        <h2 id="winTitle"></h2>
-        <p id="winBody"></p>
-      </div>
-      <div class="panel">
-        <h2>The Board</h2>
-        <div class="board" id="board"></div>
-      </div>
+  <!-- GAME (tabbed) -->
+  <div class="hidden" id="gameArea">
+    <div class="tab-bar" id="gameTabBar">
+      <button class="tab-bar-btn active" data-tab="board">Board</button>
+      <button class="tab-bar-btn" data-tab="turn">Turn</button>
+      <button class="tab-bar-btn" data-tab="hand">Hand</button>
+      <button class="tab-bar-btn" data-tab="notebook">Notebook</button>
+      <button class="tab-bar-btn" data-tab="log">Log</button>
     </div>
-    <div class="side-col">
-      <div class="panel">
-        <h2>Turn</h2>
-        <div class="turn-banner">Current turn: <b id="turnName">—</b></div>
-        <div class="turn-order" id="turnOrderList"></div>
-        <div class="dice-row">
-          <div class="die" id="die1">–</div>
-          <div class="die" id="die2">–</div>
-          <div class="dice-total">Total: <b id="diceTotal">–</b></div>
+    <div class="tab-viewport" id="tabViewport">
+      <div class="tab-track" id="tabTrack">
+
+        <div class="tab-panel" id="tabBoard">
+          <div class="panel win-banner hidden" id="winBanner">
+            <h2 id="winTitle"></h2>
+            <p id="winBody"></p>
+            <button class="block hidden" id="newRoomBtn3">Create another room</button>
+          </div>
+          <div class="board" id="board"></div>
         </div>
-        <button class="block" id="rollBtn" disabled>Roll dice</button>
-        <button class="block secondary" id="passageBtn" style="display:none;">Take secret passage</button>
-        <button class="block secondary" id="suggestBtn" disabled>Make a suggestion</button>
-        <button class="block secondary" id="accuseBtn" disabled>Make an accusation</button>
-        <button class="block secondary" id="endTurnBtn" disabled>End turn</button>
-        <button class="block secondary" id="pauseBtn" style="margin-top:10px;">Pause game</button>
-        <button class="block secondary hidden" id="endGameBtn" style="margin-top:10px;">End game for everyone</button>
-        <div class="hint" id="hintText">Waiting for your turn.</div>
-      </div>
-      <div class="panel">
-        <h2>My Hand</h2>
-        <div id="handContent"></div>
-      </div>
-      <div class="panel">
-        <h2>Notebook</h2>
-        <div id="nbContent"></div>
-      </div>
-      <div class="panel">
-        <h2>Log</h2>
-        <div class="log" id="logBox"></div>
-        <button class="block secondary" id="downloadLogBtn" style="margin-top:8px;">Download log</button>
+
+        <div class="tab-panel" id="tabTurn">
+          <div class="turn-banner">Current turn: <b id="turnName">—</b></div>
+          <div class="turn-order" id="turnOrderList"></div>
+          <div class="dice-row">
+            <div class="die" id="die1">–</div>
+            <div class="die" id="die2">–</div>
+            <div class="dice-total">Total: <b id="diceTotal">–</b></div>
+          </div>
+          <button class="block" id="rollBtn" disabled>Roll dice</button>
+          <button class="block secondary" id="passageBtn" style="display:none;">Take secret passage</button>
+          <button class="block secondary" id="suggestBtn" disabled>Make a suggestion</button>
+          <button class="block secondary" id="accuseBtn" disabled>Make an accusation</button>
+          <button class="block secondary" id="endTurnBtn" disabled>End turn</button>
+          <button class="block secondary" id="pauseBtn" style="margin-top:10px;">Pause game</button>
+          <div class="hint" id="hintText">Waiting for your turn.</div>
+        </div>
+
+        <div class="tab-panel" id="tabHand">
+          <div id="handContent"></div>
+        </div>
+
+        <div class="tab-panel" id="tabNotebook">
+          <div id="nbContent"></div>
+        </div>
+
+        <div class="tab-panel" id="tabLog">
+          <div class="log" id="logBox"></div>
+          <button class="block secondary" id="downloadLogBtn" style="margin-top:8px;">Download log</button>
+          <button class="block secondary hidden" id="endGameBtn" style="margin-top:10px;">End game for everyone</button>
+        </div>
+
       </div>
     </div>
   </div>
+
+</div>
 </div>
 
 <div class="modal-overlay" id="modalOverlay">
