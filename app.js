@@ -1,6 +1,6 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
 import {
-  getDatabase, ref, set, get, update, onValue, child
+  getDatabase, ref, set, get, update, onValue, child, runTransaction
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-database.js";
 import {
   getAuth, signInAnonymously, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signOut
@@ -21,7 +21,7 @@ const db = getDatabase(fbApp);
 const auth = getAuth(fbApp);
 
 // Bump this on every future update so it's obvious in the UI that GitHub Pages served the new build.
-const BUILD_VERSION = 13;
+const BUILD_VERSION = 14;
 document.getElementById("appTitle").textContent = "Cluedo Online " + BUILD_VERSION;
 
 let myUid = null;
@@ -336,6 +336,7 @@ function watchRoom(){
 
 function render(){
   if (!roomState) return;
+  renderPauseOverlay();
   if (roomState.status === "ended_by_host"){
     clearSessionPointer();
     document.getElementById("lobbyPanel").classList.add("hidden");
@@ -448,6 +449,28 @@ async function endGameForEveryone(){
 }
 document.getElementById("endGameLobbyBtn").addEventListener("click", endGameForEveryone);
 document.getElementById("endGameBtn").addEventListener("click", endGameForEveryone);
+
+function renderPauseOverlay(){
+  const overlayEl = document.getElementById("pauseOverlay");
+  const paused = roomState.paused;
+  if (!paused){
+    overlayEl.classList.remove("show");
+    return;
+  }
+  overlayEl.classList.add("show");
+  const byName = (roomState.players && roomState.players[paused.by] && roomState.players[paused.by].name) || "Someone";
+  document.getElementById("pauseByText").textContent = "Paused by " + byName + ". Play will resume when they're ready.";
+  const resumeBtn2 = document.getElementById("resumeBtn2");
+  resumeBtn2.classList.toggle("hidden", myUid !== paused.by);
+}
+document.getElementById("resumeBtn2").addEventListener("click", async () => {
+  if (!roomState.paused || myUid !== roomState.paused.by) return;
+  await update(roomRef(""), { paused: null });
+});
+document.getElementById("pauseBtn").addEventListener("click", async () => {
+  if (!roomState || roomState.status !== "playing" || roomState.paused) return;
+  await update(roomRef(""), { paused: { by: myUid, pausedAt: Date.now() } });
+});
 
 async function reorderPlayers(fromIdx, toIdx){
   const order = roomState.order.slice();
@@ -641,7 +664,7 @@ function renderControls(){
   const cp = roomState.players[currentTurnUid()];
   const myPos = roomState.positions[myUid];
   document.getElementById("rollBtn").disabled = !mine || roomState.status !== "playing" || !!roomState.diceTotal;
-  document.getElementById("accuseBtn").disabled = !mine || roomState.status !== "playing" || !!roomState.accusedThisTurn;
+  document.getElementById("accuseBtn").disabled = !mine || roomState.status !== "playing" || !!roomState.accusedThisTurn || !isRoom(myPos);
   document.getElementById("endTurnBtn").disabled = !mine || !roomState.canEndTurn;
   document.getElementById("suggestBtn").disabled = !mine || !isRoom(myPos) || !!roomState.suggestedThisTurn;
 
@@ -926,7 +949,11 @@ document.getElementById("suggestBtn").addEventListener("click", () => {
       id: Date.now(), suggester: myUid, suspect, weapon, room: roomName,
       ruleMode: roomState.ruleMode, queue, idx: 0, events: [],
     };
-    await update(roomRef(""), { pendingSuggestion, suggestedThisTurn: true });
+    await update(roomRef(""), {
+      pendingSuggestion,
+      suggestedThisTurn: true,
+      ["players/" + myUid + "/lastSuggestion"]: { suspect, weapon, room: roomName },
+    });
     await pushLog(roomState.players[myUid].name + " suggested " + suspect + " with the " + weapon + " in the " + roomName + ".");
   });
 });
@@ -1082,18 +1109,19 @@ function handlePublicKnowledge(){
 // ---------- Accusation ----------
 function openAccusationModal(){
   if (!isMyTurn()) return;
-  const suspectOpts = SUSPECTS.map(s => "<option>"+s+"</option>").join("");
-  const weaponOpts = WEAPONS.map(w => "<option>"+w+"</option>").join("");
-  const roomOpts = ROOM_NAMES.map(r => "<option>"+r+"</option>").join("");
+  const myPos = roomState.positions[myUid];
+  if (!isRoom(myPos)) return; // must be standing in the room you're accusing, same as suggestions
+  const roomName = ROOMS[myPos].name;
+  const lastSug = (roomState.players[myUid] || {}).lastSuggestion || {};
+  const suspectOpts = SUSPECTS.map(s => "<option"+(s===lastSug.suspect?" selected":"")+">"+s+"</option>").join("");
+  const weaponOpts = WEAPONS.map(w => "<option"+(w===lastSug.weapon?" selected":"")+">"+w+"</option>").join("");
   showModal(
     "<h3>Make an accusation</h3>" +
-    "<p>Checked privately against the envelope — a wrong guess is never shown to anyone else.</p>" +
+    "<p>Accusing in the <b>" + roomName + "</b> — checked privately against the envelope, a wrong guess is never shown to anyone else.</p>" +
     "<label style='display:block;color:#cfc4a8;font-family:monospace;font-size:11px;margin-bottom:4px;'>Suspect</label>" +
     "<select id='accSuspect' style='width:100%;margin-bottom:10px;padding:8px;background:#111823;color:#ece4d3;border:1px solid #3a475a;border-radius:4px;'>"+suspectOpts+"</select>" +
     "<label style='display:block;color:#cfc4a8;font-family:monospace;font-size:11px;margin-bottom:4px;'>Weapon</label>" +
-    "<select id='accWeapon' style='width:100%;margin-bottom:10px;padding:8px;background:#111823;color:#ece4d3;border:1px solid #3a475a;border-radius:4px;'>"+weaponOpts+"</select>" +
-    "<label style='display:block;color:#cfc4a8;font-family:monospace;font-size:11px;margin-bottom:4px;'>Room</label>" +
-    "<select id='accRoom' style='width:100%;margin-bottom:14px;padding:8px;background:#111823;color:#ece4d3;border:1px solid #3a475a;border-radius:4px;'>"+roomOpts+"</select>" +
+    "<select id='accWeapon' style='width:100%;margin-bottom:14px;padding:8px;background:#111823;color:#ece4d3;border:1px solid #3a475a;border-radius:4px;'>"+weaponOpts+"</select>" +
     "<button class='block' id='accSubmitBtn'>Submit accusation</button>" +
     "<button class='block secondary' id='accCancelBtn'>Cancel</button>"
   );
@@ -1101,7 +1129,7 @@ function openAccusationModal(){
   document.getElementById("accSubmitBtn").addEventListener("click", async () => {
     const suspect = document.getElementById("accSuspect").value;
     const weapon = document.getElementById("accWeapon").value;
-    const room = document.getElementById("accRoom").value;
+    const room = roomName;
     const env = roomState.envelope;
     const correct = suspect === env.suspect && weapon === env.weapon && room === env.room;
     if (correct){

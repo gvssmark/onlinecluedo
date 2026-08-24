@@ -112,6 +112,7 @@
         <button class="block secondary" id="suggestBtn" disabled>Make a suggestion</button>
         <button class="block secondary" id="accuseBtn" disabled>Make an accusation</button>
         <button class="block secondary" id="endTurnBtn" disabled>End turn</button>
+        <button class="block secondary" id="pauseBtn" style="margin-top:10px;">Pause game</button>
         <button class="block secondary hidden" id="endGameBtn" style="margin-top:10px;">End game for everyone</button>
         <div class="hint" id="hintText">Waiting for your turn.</div>
       </div>
@@ -136,6 +137,13 @@
   <div class="modal-box" id="modalBox"></div>
 </div>
 <div class="toast" id="toast"></div>
+<div class="pause-overlay" id="pauseOverlay">
+  <div class="pause-box">
+    <h2>Paused</h2>
+    <p id="pauseByText">Paused</p>
+    <button class="block hidden" id="resumeBtn2">Resume game</button>
+  </div>
+</div>
 
 <script type="module" src="app.js"></script>
 </body>
