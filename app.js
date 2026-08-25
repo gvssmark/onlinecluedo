@@ -5,6 +5,7 @@ import {
 import {
   getAuth, signInAnonymously, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signOut
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
+import { APP_URL } from "./link.js";
 
 // ---------- Firebase config (cluedo-online project) ----------
 const firebaseConfig = {
@@ -21,7 +22,7 @@ const db = getDatabase(fbApp);
 const auth = getAuth(fbApp);
 
 // Bump this on every future update so it's obvious in the UI that GitHub Pages served the new build.
-const BUILD_VERSION = 16;
+const BUILD_VERSION = 17;
 document.getElementById("appTitle").textContent = "Cluedo Online " + BUILD_VERSION;
 
 let myUid = null;
@@ -35,20 +36,8 @@ let authReadyResolve;
 const authReady = new Promise(res => { authReadyResolve = res; });
 
 // Family allowlist for room *creation* only — joining a room never needs this.
-// Source file had commas in place of dots (export artifact); normalized here.
-const ALLOWED_EMAILS = {
-  "deepti.mannava@gmail.com": true,
-  "hgoteti@gmail.com": true,
-  "hemanth.goteti@gmail.com": true,
-  "rajavarapumadhulika@gmail.com": true,
-  "sahiti.malyala@gmail.com": true,
-  "gbtsundary@gmail.com": true,
-  "subrahmanyam.malyala@gmail.com": true,
-  "prasuna.malyala@gmail.com": true,
-  "hngoteti@gmail.com": true,
-  "komal.raj@gmail.com": true,
-  "gvssmark@gmail.com": true,
-};
+// Loaded live from Firebase at config/allowedEmails so it can be updated
+// without redeploying code (matches the pattern used in the poker project).
 
 // ---------- Board data model (same as local prototype) ----------
 const ROOMS = {
@@ -283,14 +272,18 @@ document.getElementById("tabCreate").addEventListener("click", () => {
   if (isStandalonePWA()){
     // Google Sign-In popups are unreliable inside an installed standalone PWA —
     // send them to the regular browser instead of showing the create form.
-    const url = window.location.href.split("#")[0];
+    const url = APP_URL;
     showModal(
       "<h3>Open in your browser</h3>" +
       "<p>Creating a room needs Google Sign-In, which doesn't work reliably inside the installed app. Please open this link in your regular browser (Chrome/Safari) instead:</p>" +
       "<p style='word-break:break-all;font-family:monospace;font-size:11px;color:#d9b571;'>" + url + "</p>" +
-      "<button class='block' id='copyLinkBtn'>Copy link</button>" +
+      "<button class='block' id='openBrowserBtn'>Open in browser</button>" +
+      "<button class='block secondary' id='copyLinkBtn'>Copy link</button>" +
       "<button class='block secondary' id='closePwaNoticeBtn'>Close</button>"
     );
+    document.getElementById("openBrowserBtn").addEventListener("click", () => {
+      window.open(url, "_blank");
+    });
     document.getElementById("copyLinkBtn").addEventListener("click", () => {
       navigator.clipboard.writeText(url).catch(() => {});
       showToast("Link copied — paste it into your browser.");
@@ -316,7 +309,9 @@ document.getElementById("googleSignInBtn").addEventListener("click", async () =>
     const provider = new GoogleAuthProvider();
     const result = await signInWithPopup(auth, provider);
     const email = (result.user.email || "").toLowerCase();
-    if (!ALLOWED_EMAILS[email]){
+    const allowSnap = await get(ref(db, "config/allowedEmails")).catch(() => null);
+    const allowed = (allowSnap && allowSnap.val()) || {};
+    if (!allowed[email]){
       setLandingStatus("That Google account isn't on the family list — ask the room creator to use their own account.");
       await signOut(auth);
       return;
@@ -415,6 +410,8 @@ function resetForNewRoom(){
   document.getElementById("playerStrip").classList.add("hidden");
   document.getElementById("cluesRow").classList.add("hidden");
   document.body.classList.remove("my-turn");
+  document.getElementById("winOverlay").classList.remove("show");
+  document.getElementById("pauseOverlay").classList.remove("show");
   wasMyTurn = false;
   setActiveTab(0);
   ["lobbyPanel","gameArea","retiredPanel","hostEndedPanel"].forEach(id => document.getElementById(id).classList.add("hidden"));
@@ -733,7 +730,7 @@ function renderGame(){
 }
 
 // ---------- Help tab (static content, rendered once) ----------
-document.getElementById("helpContent").innerHTML =
+const HELP_HTML =
   "<h2 style='margin-top:0;'>How to play</h2>" +
   "<div class='help-section'><h3>Setting up</h3><p>An approved family member signs in with Google and creates a room, choosing the number of players and the suggestion rule (Normal or Family). Everyone else opens the app and joins with the room code and their name — no sign-in needed.</p></div>" +
   "<div class='help-section'><h3>Changing host</h3><p>The room creator never plays or gets dealt cards. Once enough players have joined, the creator can transfer hosting to one of them from the lobby, then close their tab — the game runs on without them.</p></div>" +
@@ -742,6 +739,11 @@ document.getElementById("helpContent").innerHTML =
   "<div class='help-section'><h3>Winning</h3><p>An accusation is checked privately against the sealed envelope. Wrong guesses stay private and cost nothing — play continues. A correct accusation ends the game and reveals the solution to everyone.</p></div>" +
   "<div class='help-section'><h3>The notebook</h3><p>Cards are colored automatically as you learn about them — your own hand, cards shown to you, and anything logically deduced by elimination. Blank cells can be clicked to record your own guesses.</p></div>" +
   "<div class='help-credits'>Developed by GVSS with Claude</div>";
+document.getElementById("helpContent").innerHTML = HELP_HTML;
+document.getElementById("landingHelpBtn").addEventListener("click", () => {
+  showModal("<div style='text-align:left;'>" + HELP_HTML + "</div><button class='block' id='closeHelpBtn' style='margin-top:14px;'>Close</button>");
+  document.getElementById("closeHelpBtn").addEventListener("click", closeModal);
+});
 
 function renderPlayerStrip(){
   const strip = document.getElementById("playerStrip");
@@ -815,6 +817,9 @@ function setActiveTab(idx){
   activeTabIndex = Math.max(0, Math.min(TAB_IDS.length - 1, idx));
   document.getElementById("tabTrack").style.transform = "translateX(-" + (activeTabIndex * 20) + "%)";
   document.querySelectorAll(".tab-bar-btn").forEach((b, i) => b.classList.toggle("active", i === activeTabIndex));
+  window.scrollTo(0, 0);
+  const scrollArea = document.getElementById("scrollArea");
+  if (scrollArea) scrollArea.scrollTop = 0;
 }
 document.querySelectorAll(".tab-bar-btn").forEach((btn, i) => {
   btn.addEventListener("click", () => setActiveTab(i));

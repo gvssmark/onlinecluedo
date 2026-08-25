@@ -2,11 +2,12 @@
 // Only caches the static app shell. Never caches Firebase requests — the game
 // needs a live connection to actually play, this just makes the app installable
 // and lets the shell load instantly on repeat visits.
-const CACHE_NAME = "cluedo-shell-v15";
+const CACHE_NAME = "cluedo-shell-v17";
 const SHELL_FILES = [
   "./index.html",
   "./style.css",
   "./app.js",
+  "./link.js",
   "./manifest.json",
   "./icon-192.png",
   "./icon-512.png",
