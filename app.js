@@ -21,7 +21,7 @@ const db = getDatabase(fbApp);
 const auth = getAuth(fbApp);
 
 // Bump this on every future update so it's obvious in the UI that GitHub Pages served the new build.
-const BUILD_VERSION = 15;
+const BUILD_VERSION = 16;
 document.getElementById("appTitle").textContent = "Cluedo Online " + BUILD_VERSION;
 
 let myUid = null;
@@ -263,11 +263,45 @@ function avatarInnerHtml(p){
 }
 
 // ---------- Landing tabs ----------
+// ---------- PWA: install detection, service worker, orientation lock, browser redirect ----------
+function isStandalonePWA(){
+  return window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
+}
+if ("serviceWorker" in navigator){
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("sw.js").catch(() => {});
+  });
+}
+if (isStandalonePWA() && window.screen && window.screen.orientation && window.screen.orientation.lock){
+  window.screen.orientation.lock("portrait").catch(() => {});
+}
+
 document.getElementById("tabCreate").addEventListener("click", () => {
   document.getElementById("tabCreate").classList.add("active");
   document.getElementById("tabJoin").classList.remove("active");
-  document.getElementById("createForm").classList.remove("hidden");
   document.getElementById("joinForm").classList.add("hidden");
+  if (isStandalonePWA()){
+    // Google Sign-In popups are unreliable inside an installed standalone PWA —
+    // send them to the regular browser instead of showing the create form.
+    const url = window.location.href.split("#")[0];
+    showModal(
+      "<h3>Open in your browser</h3>" +
+      "<p>Creating a room needs Google Sign-In, which doesn't work reliably inside the installed app. Please open this link in your regular browser (Chrome/Safari) instead:</p>" +
+      "<p style='word-break:break-all;font-family:monospace;font-size:11px;color:#d9b571;'>" + url + "</p>" +
+      "<button class='block' id='copyLinkBtn'>Copy link</button>" +
+      "<button class='block secondary' id='closePwaNoticeBtn'>Close</button>"
+    );
+    document.getElementById("copyLinkBtn").addEventListener("click", () => {
+      navigator.clipboard.writeText(url).catch(() => {});
+      showToast("Link copied — paste it into your browser.");
+    });
+    document.getElementById("closePwaNoticeBtn").addEventListener("click", closeModal);
+    document.getElementById("tabJoin").classList.add("active");
+    document.getElementById("tabCreate").classList.remove("active");
+    document.getElementById("joinForm").classList.remove("hidden");
+    return;
+  }
+  document.getElementById("createForm").classList.remove("hidden");
 });
 document.getElementById("tabJoin").addEventListener("click", () => {
   document.getElementById("tabJoin").classList.add("active");
@@ -311,6 +345,10 @@ document.getElementById("createBtn").addEventListener("click", async () => {
     createdAt: Date.now(),
   };
   await set(ref(db, "rooms/" + code), initial);
+  if (lastRoomCodeForNotify){
+    await update(ref(db, "rooms/" + lastRoomCodeForNotify), { nextRoomCode: code }).catch(() => {});
+    lastRoomCodeForNotify = null;
+  }
   roomCode = code;
   saveSessionPointer(code, "creator");
   watchRoom();
@@ -389,8 +427,12 @@ function resetForNewRoom(){
   document.getElementById("createForm").classList.remove("hidden");
   document.getElementById("joinForm").classList.add("hidden");
 }
-["newRoomBtn1","newRoomBtn2","newRoomBtn3"].forEach(id => {
+["newRoomBtn1","newRoomBtn2"].forEach(id => {
   document.getElementById(id).addEventListener("click", resetForNewRoom);
+});
+document.getElementById("newRoomBtn3").addEventListener("click", () => {
+  lastRoomCodeForNotify = roomCode;
+  resetForNewRoom();
 });
 
 function render(){
@@ -571,7 +613,7 @@ document.getElementById("startGameBtn").addEventListener("click", async () => {
     hands[uid].forEach(c => { notebooks[uid][c][uid] = "auto-have"; });
   });
   await update(ref(db, "rooms/" + roomCode), {
-    status: "playing", envelope, hands, positions, notebooks,
+    status: "playing", envelope, hands, positions, notebooks, startedAt: Date.now(),
     turnIndex: 0, suggestedThisTurn: false, accusedThisTurn: false,
     log: [{msg: "Cards dealt. The envelope is sealed. Rule: " + (roomState.ruleMode==="family"?"Family":"Normal") + ".", ts: Date.now()}],
   });
@@ -640,7 +682,7 @@ function renderBoardTokens(){
     if (!p || !cell) return;
     const tok = cell.querySelector(".tokens");
     const t = document.createElement("div");
-    t.className = "token"; t.style.background = p.color; t.title = p.name;
+    t.className = "token"; t.style.background = p.photo ? "#333" : p.color; t.style.borderColor = p.color; t.title = p.name;
     t.innerHTML = avatarInnerHtml(p);
     tok.appendChild(t);
   });
@@ -659,12 +701,11 @@ function renderGame(){
   document.getElementById("scrollArea").classList.add("with-strip");
   document.getElementById("playerStrip").classList.remove("hidden");
   document.getElementById("cluesRow").classList.remove("hidden");
+  document.getElementById("roomMeta").classList.remove("hidden");
+  document.getElementById("ruleModeText").textContent = roomState.ruleMode === "family" ? "Family rule" : "Normal rule";
   renderPlayerStrip();
+  renderWinOverlay();
   if (roomState.status === "ended"){
-    document.getElementById("winBanner").classList.remove("hidden");
-    document.getElementById("winTitle").textContent = (roomState.players[roomState.winnerUid]||{}).name + " wins!";
-    document.getElementById("winBody").textContent =
-      "It was " + roomState.envelope.suspect + ", with the " + roomState.envelope.weapon + ", in the " + roomState.envelope.room + ".";
     ["rollBtn","suggestBtn","accuseBtn","endTurnBtn"].forEach(id => document.getElementById(id).disabled = true);
     document.getElementById("passageBtn").style.display = "none";
   }
@@ -691,6 +732,17 @@ function renderGame(){
   wasMyTurn = nowMyTurn;
 }
 
+// ---------- Help tab (static content, rendered once) ----------
+document.getElementById("helpContent").innerHTML =
+  "<h2 style='margin-top:0;'>How to play</h2>" +
+  "<div class='help-section'><h3>Setting up</h3><p>An approved family member signs in with Google and creates a room, choosing the number of players and the suggestion rule (Normal or Family). Everyone else opens the app and joins with the room code and their name — no sign-in needed.</p></div>" +
+  "<div class='help-section'><h3>Changing host</h3><p>The room creator never plays or gets dealt cards. Once enough players have joined, the creator can transfer hosting to one of them from the lobby, then close their tab — the game runs on without them.</p></div>" +
+  "<div class='help-section'><h3>Playing your turn</h3><p>Roll the dice, then move that many steps to a room or a hallway square. Landing in a room lets you make a suggestion (name a suspect and weapon — the room is wherever you're standing). You can also make an accusation, but only while standing in the room you're naming.</p></div>" +
+  "<div class='help-section'><h3>Suggestions</h3><p>The next player in turn order checks their hand. If they hold a matching card, they show it to you privately and the check ends there. Under Family rule, a player whose only match was already shown to you before may pass instead — checking then moves to the next player, but still stops the moment anyone shows a card.</p></div>" +
+  "<div class='help-section'><h3>Winning</h3><p>An accusation is checked privately against the sealed envelope. Wrong guesses stay private and cost nothing — play continues. A correct accusation ends the game and reveals the solution to everyone.</p></div>" +
+  "<div class='help-section'><h3>The notebook</h3><p>Cards are colored automatically as you learn about them — your own hand, cards shown to you, and anything logically deduced by elimination. Blank cells can be clicked to record your own guesses.</p></div>" +
+  "<div class='help-credits'>Developed by GVSS with Claude</div>";
+
 function renderPlayerStrip(){
   const strip = document.getElementById("playerStrip");
   strip.innerHTML = "";
@@ -700,12 +752,51 @@ function renderPlayerStrip(){
     if (!p) return;
     const av = document.createElement("div");
     av.className = "player-avatar" + (uid === cur && roomState.status === "playing" ? " current-turn" : "");
-    av.style.borderColor = p.photo ? "var(--brass)" : p.color;
+    av.style.borderColor = p.color;
+    if (!p.photo) av.style.background = p.color;
     av.title = p.name;
     av.innerHTML = avatarInnerHtml(p);
     strip.appendChild(av);
   });
 }
+
+let lastRoomCodeForNotify = null;
+
+function renderWinOverlay(){
+  const overlayEl = document.getElementById("winOverlay");
+  const isWin = roomState.status === "ended";
+  overlayEl.classList.toggle("show", isWin);
+  if (!isWin) return;
+  const winner = roomState.players[roomState.winnerUid];
+  document.getElementById("winOverlayTitle").textContent = (winner ? winner.name : "Someone") + " wins!";
+  document.getElementById("winOverlayBody").textContent =
+    "It was " + roomState.envelope.suspect + ", with the " + roomState.envelope.weapon + ", in the " + roomState.envelope.room + ".";
+  document.getElementById("newRoomBtn3").classList.toggle("hidden", !isCreatorSession);
+  const nextHint = document.getElementById("nextRoomHint");
+  if (roomState.nextRoomCode){
+    nextHint.classList.remove("hidden");
+    nextHint.textContent = "The host started a new game — room code: " + roomState.nextRoomCode;
+  } else {
+    nextHint.classList.add("hidden");
+  }
+}
+document.getElementById("backToJoinBtn").addEventListener("click", () => {
+  const nextCode = roomState && roomState.nextRoomCode;
+  resetForNewRoom();
+  if (nextCode) document.getElementById("joinCode").value = nextCode;
+});
+
+// ---------- Elapsed play timer ----------
+setInterval(() => {
+  if (!roomState || !roomState.startedAt || roomState.status !== "playing"){
+    return;
+  }
+  const secs = Math.floor((Date.now() - roomState.startedAt) / 1000);
+  const mm = String(Math.floor(secs / 60)).padStart(2, "0");
+  const ss = String(secs % 60).padStart(2, "0");
+  const el = document.getElementById("playTimerText");
+  if (el) el.textContent = mm + ":" + ss;
+}, 1000);
 
 function renderCluesRow(){
   const row = document.getElementById("cluesRow");
@@ -717,7 +808,7 @@ function renderCluesRow(){
 }
 
 // ---------- Tabs + swipe ----------
-const TAB_IDS = ["board","turn","hand","notebook","log"];
+const TAB_IDS = ["board","turn","notebook","log","help"];
 let activeTabIndex = 0;
 let wasMyTurn = false;
 function setActiveTab(idx){
@@ -762,15 +853,41 @@ function renderTurnOrder(){
   });
 }
 
+function highlightLogMessage(msg){
+  let html = msg.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  (roomState.order || []).forEach(uid => {
+    const p = roomState.players[uid];
+    if (!p || !p.name) return;
+    const re = new RegExp("\\b" + p.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\b", "g");
+    html = html.replace(re, "<span style='color:" + p.color + ";font-weight:bold;'>" + p.name + "</span>");
+  });
+  const colorFor = { suspect: "#c25a5a", weapon: "#d9b571", room: "#6fae80" };
+  ALL_CARDS.forEach(card => {
+    const re = new RegExp("\\b" + card.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\b", "g");
+    html = html.replace(re, "<span style='color:" + colorFor[catOf(card)] + ";'>" + card + "</span>");
+  });
+  html = html.replace(/\bpassed\b/g, "<span style='color:#c25a5a;'>passed</span>");
+  return html;
+}
+
 function renderLog(){
   const entries = roomState.log || [];
   if (entries.length === lastLogCount) return;
   const box = document.getElementById("logBox");
   box.innerHTML = "";
-  entries.slice().reverse().forEach(e => {
+  const reversed = entries.slice().reverse();
+  let currentGroup = null;
+  let lastTurnUid = undefined;
+  reversed.forEach(e => {
+    if (e.turnUid !== lastTurnUid || !currentGroup){
+      currentGroup = document.createElement("div");
+      currentGroup.className = "log-turn-group";
+      box.appendChild(currentGroup);
+      lastTurnUid = e.turnUid;
+    }
     const d = document.createElement("div");
-    d.textContent = e.msg;
-    box.appendChild(d);
+    d.innerHTML = highlightLogMessage(e.msg);
+    currentGroup.appendChild(d);
   });
   box.scrollTop = 0;
   lastLogCount = entries.length;
@@ -837,6 +954,7 @@ document.getElementById("rollBtn").addEventListener("click", async () => {
   await pushLog((roomState.players[myUid].name) + " rolled " + d1 + " + " + d2 + " = " + total + ".");
   renderBoardTokens();
   if (reachable.size === 0) offerNextAction();
+  else setTimeout(() => setActiveTab(0), 5000); // auto-shift to Board so they can pick a move
 });
 
 document.getElementById("passageBtn").addEventListener("click", async () => {
@@ -846,6 +964,7 @@ document.getElementById("passageBtn").addEventListener("click", async () => {
   if (!dest) return;
   await update(roomRef(""), { ["positions/" + myUid]: dest, canEndTurn: true });
   await pushLog(roomState.players[myUid].name + " slipped through the secret passage from " + ROOMS[from].name + " to " + ROOMS[dest].name + ".");
+  setTimeout(() => setActiveTab(1), 5000); // auto-shift back to Turn
 });
 
 async function onCellClick(id){
@@ -855,6 +974,7 @@ async function onCellClick(id){
   const label = isRoom(id) ? ROOMS[id].name : "the hallway";
   await pushLog(roomState.players[myUid].name + " moved to " + label + ".");
   if (!isRoom(id)) offerNextAction(); // landing in a room leaves suggestion still on the table
+  else setTimeout(() => setActiveTab(1), 5000); // auto-shift back to Turn after choosing a room
 }
 
 async function endMyTurn(){
@@ -890,7 +1010,8 @@ function offerNextAction(){
 }
 
 async function pushLog(msg){
-  const entries = (roomState.log || []).concat([{msg, ts: Date.now()}]);
+  const turnUid = currentTurnUid();
+  const entries = (roomState.log || []).concat([{msg, ts: Date.now(), turnUid}]);
   await update(roomRef(""), { log: entries });
 }
 
@@ -942,13 +1063,32 @@ function renderHand(){
   const hand = (roomState.hands || {})[myUid] || [];
   const catOrder = { room: 0, suspect: 1, weapon: 2 };
   const sorted = hand.slice().sort((a, b) => catOrder[catOf(a)] - catOrder[catOf(b)]);
+  const myShownTo = ((roomState.players[myUid] || {}).shownTo) || {};
   content.innerHTML = "";
   const grid = document.createElement("div");
-  grid.className = "card-grid";
+  grid.className = "card-grid hand-board-grid";
   sorted.forEach(card => {
     const chip = document.createElement("div");
-    chip.className = "card-chip cat-" + catOf(card);
-    chip.textContent = card;
+    chip.className = "card-chip hand-cell cat-" + catOf(card);
+    const nameEl = document.createElement("div");
+    nameEl.className = "hand-cell-name";
+    nameEl.textContent = card;
+    chip.appendChild(nameEl);
+    const shownUids = Object.keys(myShownTo[card] || {});
+    if (shownUids.length){
+      const tok = document.createElement("div");
+      tok.className = "tokens";
+      shownUids.forEach(uid => {
+        const p = roomState.players[uid];
+        if (!p) return;
+        const t = document.createElement("div");
+        t.className = "token";
+        t.style.background = p.photo ? "#333" : p.color; t.style.borderColor = p.color; t.title = p.name;
+        t.innerHTML = avatarInnerHtml(p);
+        tok.appendChild(t);
+      });
+      chip.appendChild(tok);
+    }
     grid.appendChild(chip);
   });
   content.appendChild(grid);
@@ -1154,7 +1294,8 @@ function showResponderModal(ps, options, mandatory){
       const card = btn.dataset.card;
       closeModal();
       await pushSuggestionEvent(ps, { by: myUid, matched: true, card });
-      await advanceQueue(ps, ps.ruleMode === "normal");
+      await update(ref(db, "rooms/" + roomCode + "/players/" + myUid + "/shownTo/" + card), { [ps.suggester]: true });
+      await advanceQueue(ps, true); // showing a card always ends the check, both rules
       responderModalOpen = false;
     });
   });
