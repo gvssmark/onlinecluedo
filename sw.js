@@ -2,7 +2,7 @@
 // Only caches the static app shell. Never caches Firebase requests — the game
 // needs a live connection to actually play, this just makes the app installable
 // and lets the shell load instantly on repeat visits.
-const CACHE_NAME = "cluedo-shell-v17";
+const CACHE_NAME = "cluedo-shell-v19";
 const SHELL_FILES = [
   "./index.html",
   "./style.css",
@@ -33,7 +33,16 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
   // Never intercept Firebase / Google network calls — those must always hit the network live.
   if (url.origin !== self.location.origin) return;
+  // Network-first for the app shell: always try to get the latest build; only fall
+  // back to the cache if genuinely offline. Prevents a stale early build from getting
+  // stuck being served forever (this caused real problems on mobile browsers).
   event.respondWith(
-    caches.match(event.request).then((cached) => cached || fetch(event.request))
+    fetch(event.request)
+      .then((response) => {
+        const copy = response.clone();
+        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy)).catch(() => {});
+        return response;
+      })
+      .catch(() => caches.match(event.request))
   );
 });

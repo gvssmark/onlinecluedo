@@ -22,7 +22,7 @@ const db = getDatabase(fbApp);
 const auth = getAuth(fbApp);
 
 // Bump this on every future update so it's obvious in the UI that GitHub Pages served the new build.
-const BUILD_VERSION = 18;
+const BUILD_VERSION = 19;
 document.getElementById("appTitle").textContent = "Cluedo Online " + BUILD_VERSION;
 
 let myUid = null;
@@ -576,6 +576,21 @@ document.getElementById("pauseBtn").addEventListener("click", async () => {
   await update(roomRef(""), { paused: { by: myUid, pausedAt: Date.now() } });
 });
 
+document.getElementById("retireBtn").addEventListener("click", () => {
+  if (!roomState || roomState.status !== "playing") return;
+  showModal(
+    "<h3>Retire from the game?</h3>" +
+    "<p>The system will play your remaining turns automatically (roll, move, and sometimes suggest), and will always show a card immediately if asked to disprove. This can't be undone for this game.</p>" +
+    "<button class='block' id='retireConfirmBtn'>Yes, retire</button>" +
+    "<button class='block secondary' id='retireCancelBtn'>Cancel</button>"
+  );
+  document.getElementById("retireCancelBtn").addEventListener("click", closeModal);
+  document.getElementById("retireConfirmBtn").addEventListener("click", async () => {
+    closeModal();
+    await update(roomRef("players/" + myUid), { retired: true });
+  });
+});
+
 async function reorderPlayers(fromIdx, toIdx){
   const order = roomState.order.slice();
   const [moved] = order.splice(fromIdx, 1);
@@ -801,6 +816,84 @@ setInterval(() => {
   if (el) el.textContent = mm + ":" + ss;
 }, 1000);
 
+// ---------- General 10s auto-end-turn + retired-player auto-play watcher ----------
+let autoTurnClaimInFlight = false;
+setInterval(async () => {
+  if (!roomState || roomState.status !== "playing" || roomState.paused || autoTurnClaimInFlight) return;
+
+  // Countdown display for the current-turn player.
+  const hintEl = document.getElementById("autoTimerHint");
+  if (hintEl){
+    if (isMyTurn() && roomState.canEndTurn && roomState.canEndTurnAt){
+      const left = Math.max(0, Math.ceil((roomState.canEndTurnAt - Date.now()) / 1000));
+      hintEl.textContent = "Turn ends automatically in " + left + "s unless you act.";
+    } else {
+      hintEl.textContent = "";
+    }
+  }
+
+  // General auto-end-turn once the 10s window has passed.
+  if (roomState.canEndTurn && roomState.canEndTurnAt && Date.now() > roomState.canEndTurnAt && !roomState.pendingSuggestion){
+    autoTurnClaimInFlight = true;
+    try{ await forceAdvanceTurn(); } finally{ autoTurnClaimInFlight = false; }
+    return;
+  }
+
+  // Retired-player auto-play: roll, move, maybe suggest.
+  const cur = roomState.players[currentTurnUid()];
+  if (cur && cur.retired && !roomState.pendingSuggestion && !roomState.diceTotal){
+    autoTurnClaimInFlight = true;
+    try{ await tryAutoPlayRetiredTurn(); } finally{ autoTurnClaimInFlight = false; }
+  }
+}, 1500);
+
+async function tryAutoPlayRetiredTurn(){
+  const turnUid = currentTurnUid();
+  const claimKey = "autoplay:" + roomState.turnIndex;
+  const result = await runTransaction(roomRef("autoPlayTurnClaim"), (cur) => {
+    if (cur === claimKey) return; // already claimed for this turn — abort
+    return claimKey;
+  });
+  if (!result.committed) return;
+
+  const d1 = 1 + Math.floor(Math.random()*6);
+  const d2 = 1 + Math.floor(Math.random()*6);
+  const total = d1 + d2;
+  const from = roomState.positions[turnUid];
+  const reach = Array.from(computeReachable(from, total));
+  const name = roomState.players[turnUid].name;
+  await update(roomRef(""), { diceTotal: total });
+  await pushLog(name + " (retired) rolled " + d1 + " + " + d2 + " = " + total + ".");
+
+  if (reach.length === 0){
+    await update(roomRef(""), { canEndTurn: true, canEndTurnAt: Date.now() + 10000 });
+    return;
+  }
+  const dest = reach[Math.floor(Math.random() * reach.length)];
+  await update(roomRef(""), { ["positions/" + turnUid]: dest, canEndTurn: true, canEndTurnAt: Date.now() + 10000 });
+  const label = isRoom(dest) ? ROOMS[dest].name : "the hallway";
+  await pushLog(name + " (retired) moved to " + label + ".");
+
+  if (isRoom(dest)){
+    const hand = (roomState.hands || {})[turnUid] || [];
+    const suspectChoice = SUSPECTS.find(s => !hand.includes(s)) || SUSPECTS[0];
+    const weaponChoice = WEAPONS.find(w => !hand.includes(w)) || WEAPONS[0];
+    const order = roomState.order;
+    const startIdx = order.indexOf(turnUid);
+    const queue = [];
+    for(let step=1; step<order.length; step++) queue.push(order[(startIdx+step) % order.length]);
+    const pendingSuggestion = {
+      id: Date.now(), suggester: turnUid, suspect: suspectChoice, weapon: weaponChoice, room: ROOMS[dest].name,
+      ruleMode: roomState.ruleMode, queue, idx: 0, events: [],
+    };
+    await update(roomRef(""), {
+      pendingSuggestion, suggestedThisTurn: true, canEndTurn: false, canEndTurnAt: null,
+      ["players/" + turnUid + "/lastSuggestion"]: { suspect: suspectChoice, weapon: weaponChoice, room: ROOMS[dest].name },
+    });
+    await pushLog(name + " (retired) suggested " + suspectChoice + " with the " + weaponChoice + " in the " + ROOMS[dest].name + ".");
+  }
+}
+
 function renderCluesRow(){
   const row = document.getElementById("cluesRow");
   const nb = (roomState.notebooks || {})[myUid];
@@ -902,6 +995,19 @@ function renderLog(){
 function renderControls(){
   const endGameBtn = document.getElementById("endGameBtn");
   endGameBtn.classList.toggle("hidden", myUid !== roomState.hostUid);
+  const myPlayer = roomState.players[myUid];
+  const retireBtn = document.getElementById("retireBtn");
+  if (myPlayer && myPlayer.retired){
+    retireBtn.disabled = true;
+    retireBtn.textContent = "Retired — system is playing your turns";
+    ["rollBtn","suggestBtn","accuseBtn","endTurnBtn"].forEach(id => document.getElementById(id).disabled = true);
+    document.getElementById("passageBtn").style.display = "none";
+    document.getElementById("hintText").textContent = "You've retired — the system plays your turns for you.";
+    return;
+  } else {
+    retireBtn.disabled = !myPlayer;
+    retireBtn.textContent = "Retire from game";
+  }
   if (myUid === roomState.creatorUid && !roomState.players[myUid]){
     ["rollBtn","suggestBtn","accuseBtn","endTurnBtn"].forEach(id => document.getElementById(id).disabled = true);
     document.getElementById("passageBtn").style.display = "none";
@@ -956,7 +1062,7 @@ document.getElementById("rollBtn").addEventListener("click", async () => {
   document.getElementById("die2").textContent = d2;
   document.getElementById("diceTotal").textContent = total;
   reachable = computeReachable(roomState.positions[myUid], total);
-  await update(roomRef(""), { diceTotal: total, canEndTurn: reachable.size === 0 });
+  await update(roomRef(""), { diceTotal: total, canEndTurn: reachable.size === 0, canEndTurnAt: reachable.size === 0 ? Date.now() + 10000 : null });
   await pushLog((roomState.players[myUid].name) + " rolled " + d1 + " + " + d2 + " = " + total + ".");
   renderBoardTokens();
   if (reachable.size === 0) offerNextAction();
@@ -968,14 +1074,14 @@ document.getElementById("passageBtn").addEventListener("click", async () => {
   const from = roomState.positions[myUid];
   const dest = SECRET_PASSAGES[from];
   if (!dest) return;
-  await update(roomRef(""), { ["positions/" + myUid]: dest, canEndTurn: true });
+  await update(roomRef(""), { ["positions/" + myUid]: dest, canEndTurn: true, canEndTurnAt: Date.now() + 10000 });
   await pushLog(roomState.players[myUid].name + " slipped through the secret passage from " + ROOMS[from].name + " to " + ROOMS[dest].name + ".");
   setTimeout(() => setActiveTab(1), 5000); // auto-shift back to Turn
 });
 
 async function onCellClick(id){
   if (!isMyTurn() || !reachable.has(id)) return;
-  await update(roomRef(""), { ["positions/" + myUid]: id, canEndTurn: true });
+  await update(roomRef(""), { ["positions/" + myUid]: id, canEndTurn: true, canEndTurnAt: Date.now() + 10000 });
   reachable = new Set();
   const label = isRoom(id) ? ROOMS[id].name : "the hallway";
   await pushLog(roomState.players[myUid].name + " moved to " + label + ".");
@@ -990,9 +1096,23 @@ async function endMyTurn(){
   document.getElementById("die1").textContent = "–";
   document.getElementById("die2").textContent = "–";
   document.getElementById("diceTotal").textContent = "–";
-  await update(roomRef(""), { turnIndex: nextIdx, diceTotal: null, canEndTurn: false, suggestedThisTurn: false, accusedThisTurn: false });
+  await update(roomRef(""), { turnIndex: nextIdx, diceTotal: null, canEndTurn: false, canEndTurnAt: null, suggestedThisTurn: false, accusedThisTurn: false });
 }
 document.getElementById("endTurnBtn").addEventListener("click", endMyTurn);
+
+// Advances the turn on behalf of whoever's turn it is — used by the general
+// 10-second auto-end-turn timer and by retired-player auto-play, so it works
+// even if that player's own device is closed. Claimed via transaction so only
+// one connected client actually performs it.
+async function forceAdvanceTurn(){
+  const result = await runTransaction(roomRef("canEndTurnAt"), (cur) => {
+    if (!cur) return; // already cleared by someone else — abort
+    return null;
+  });
+  if (!result.committed) return;
+  const nextIdx = (roomState.turnIndex + 1) % roomState.order.length;
+  await update(roomRef(""), { turnIndex: nextIdx, diceTotal: null, canEndTurn: false, suggestedThisTurn: false, accusedThisTurn: false });
+}
 
 function offerNextAction(){
   if (!isMyTurn() || overlay.classList.contains("open")) return;
@@ -1254,7 +1374,10 @@ function handlePendingSuggestion(ps){
 
   const responderUid = ps.queue[ps.idx];
   const key = ps.id + ":" + ps.idx;
-  if (responderUid === myUid && respondedForKey !== key && !responderModalOpen && !suggesterModalOpen){
+  const responderPlayer = roomState.players[responderUid];
+  if (responderPlayer && responderPlayer.retired){
+    tryAutoRespondForRetired(ps, responderUid, key);
+  } else if (responderUid === myUid && respondedForKey !== key && !responderModalOpen && !suggesterModalOpen){
     responderModalOpen = true;
     respondedForKey = key;
     actAsResponder(ps);
@@ -1262,6 +1385,32 @@ function handlePendingSuggestion(ps){
 
   if (ps.suggester === myUid){
     processSuggesterEvents(ps);
+  }
+}
+
+// A retired player can't respond themselves, so any connected client may act on
+// their behalf — claimed via a transaction so only one client actually does it.
+// Retired players always show immediately if they hold a match (Normal-rule style),
+// never the Family-rule optional pass.
+async function tryAutoRespondForRetired(ps, responderUid, key){
+  const result = await runTransaction(roomRef("pendingSuggestion/autoClaim"), (cur) => {
+    if (cur === key) return; // already claimed for this exact step — abort
+    return key;
+  });
+  if (!result.committed) return;
+  const freshPs = roomState.pendingSuggestion;
+  if (!freshPs || freshPs.id !== ps.id || freshPs.idx !== ps.idx) return;
+  const hand = (roomState.hands || {})[responderUid] || [];
+  const trio = [ps.suspect, ps.weapon, ps.room];
+  const matches = hand.filter(c => trio.includes(c));
+  if (matches.length === 0){
+    await pushSuggestionEvent(ps, { by: responderUid, matched: false });
+    await advanceQueue(ps, false);
+  } else {
+    const card = matches[0];
+    await pushSuggestionEvent(ps, { by: responderUid, matched: true, card });
+    await update(ref(db, "rooms/" + roomCode + "/players/" + responderUid + "/shownTo/" + card), { [ps.suggester]: true });
+    await advanceQueue(ps, true);
   }
 }
 
@@ -1366,7 +1515,7 @@ async function processSuggesterEvents(ps){
       await update(roomRef(""), { publicKnowledge: pk });
       await pushLog("No one could disprove " + roomState.players[ps.suggester].name + "'s suggestion.");
     }
-    await update(roomRef(""), { pendingSuggestion: null, canEndTurn: true });
+    await update(roomRef(""), { pendingSuggestion: null, canEndTurn: true, canEndTurnAt: Date.now() + 10000 });
     finishingSuggestion = false;
     suggesterProcessing = false;
     offerNextAction();
@@ -1438,7 +1587,7 @@ function openAccusationModal(){
       );
       document.getElementById("accOkBtn").addEventListener("click", async () => {
         closeModal();
-        await update(roomRef(""), { canEndTurn: true, accusedThisTurn: true });
+        await update(roomRef(""), { canEndTurn: true, canEndTurnAt: Date.now() + 10000, accusedThisTurn: true });
         await pushLog(roomState.players[myUid].name + " made an accusation. (Result kept private.)");
         offerNextAction();
       });
