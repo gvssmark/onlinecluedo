@@ -22,7 +22,7 @@ const db = getDatabase(fbApp);
 const auth = getAuth(fbApp);
 
 // Bump this on every future update so it's obvious in the UI that GitHub Pages served the new build.
-const BUILD_VERSION = 19;
+const BUILD_VERSION = 20;
 document.getElementById("appTitle").textContent = "Cluedo Online " + BUILD_VERSION;
 
 let myUid = null;
@@ -1383,9 +1383,45 @@ function handlePendingSuggestion(ps){
     actAsResponder(ps);
   }
 
-  if (ps.suggester === myUid){
+  if (ps.suggester === myUid && !(roomState.players[myUid] && roomState.players[myUid].retired)){
     processSuggesterEvents(ps);
+  } else {
+    const suggesterPlayer = roomState.players[ps.suggester];
+    if (suggesterPlayer && suggesterPlayer.retired){
+      tryAutoFinalizeForRetiredSuggester(ps);
+    }
   }
+}
+
+// A retired suggester's own device may be closed, so no client would ever satisfy
+// ps.suggester === myUid to run the normal finalize flow — leaving the suggestion
+// stuck forever. Any bystander client can claim and run this instead. No modals
+// needed since nobody's actively watching on the retired player's behalf.
+async function tryAutoFinalizeForRetiredSuggester(ps){
+  if (ps.idx < ps.queue.length) return; // still waiting on a responder, nothing to finalize yet
+  const claimKey = "retiredFinalize:" + ps.id;
+  const result = await runTransaction(roomRef("pendingSuggestion/autoFinalizeClaim"), (cur) => {
+    if (cur === claimKey) return; // already claimed — abort
+    return claimKey;
+  });
+  if (!result.committed) return;
+  const events = ps.events || [];
+  for (const evt of events){
+    if (evt.matched && evt.card){
+      await update(ref(db, "rooms/" + roomCode + "/notebooks/" + ps.suggester + "/" + evt.card), { [evt.by]: "auto-shown" });
+      await pushLog(roomState.players[evt.by].name + " showed a card to " + roomState.players[ps.suggester].name + " (retired) privately.");
+    } else {
+      await pushLog(roomState.players[evt.by].name + " had nothing to show and passed.");
+    }
+  }
+  const anyMatched = events.some(e => e.matched);
+  if (!anyMatched){
+    const trio = [ps.suspect, ps.weapon, ps.room];
+    const pk = (roomState.publicKnowledge || []).concat([{ trio, exceptUid: ps.suggester, ts: Date.now() }]);
+    await update(roomRef(""), { publicKnowledge: pk });
+    await pushLog("No one could disprove " + roomState.players[ps.suggester].name + "'s (retired) suggestion.");
+  }
+  await update(roomRef(""), { pendingSuggestion: null, canEndTurn: true, canEndTurnAt: Date.now() + 10000 });
 }
 
 // A retired player can't respond themselves, so any connected client may act on
