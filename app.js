@@ -22,7 +22,7 @@ const db = getDatabase(fbApp);
 const auth = getAuth(fbApp);
 
 // Bump this on every future update so it's obvious in the UI that GitHub Pages served the new build.
-const BUILD_VERSION = 17;
+const BUILD_VERSION = 18;
 document.getElementById("appTitle").textContent = "Cluedo Online " + BUILD_VERSION;
 
 let myUid = null;
@@ -310,8 +310,9 @@ document.getElementById("googleSignInBtn").addEventListener("click", async () =>
     const result = await signInWithPopup(auth, provider);
     const email = (result.user.email || "").toLowerCase();
     const allowSnap = await get(ref(db, "config/allowedEmails")).catch(() => null);
-    const allowed = (allowSnap && allowSnap.val()) || {};
-    if (!allowed[email]){
+    const allowedList = (allowSnap && allowSnap.val()) || [];
+    const allowed = Array.isArray(allowedList) ? allowedList.map(e => (e||"").toLowerCase()) : Object.keys(allowedList).map(e => e.toLowerCase());
+    if (!allowed.includes(email)){
       setLandingStatus("That Google account isn't on the family list — ask the room creator to use their own account.");
       await signOut(auth);
       return;
