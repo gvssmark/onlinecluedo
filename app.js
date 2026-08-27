@@ -22,7 +22,7 @@ const db = getDatabase(fbApp);
 const auth = getAuth(fbApp);
 
 // Bump this on every future update so it's obvious in the UI that GitHub Pages served the new build.
-const BUILD_VERSION = 20;
+const BUILD_VERSION = 21;
 document.getElementById("appTitle").textContent = "Cluedo Online " + BUILD_VERSION;
 
 let myUid = null;
@@ -727,13 +727,13 @@ function renderGame(){
   renderTurnOrder();
   renderBoardTokens();
   renderControls();
+  handlePendingSuggestion(roomState.pendingSuggestion || null);
+  handlePublicKnowledge(); // apply any fresh auto-no marks before rendering Hand/Notebook/Clues below
   renderHand();
   renderNotebook();
   renderLog();
   renderCluesRow();
   cacheRoomData();
-  handlePendingSuggestion(roomState.pendingSuggestion || null);
-  handlePublicKnowledge();
 
   const nowMyTurn = isMyTurn();
   if (nowMyTurn && !wasMyTurn){
@@ -1026,10 +1026,11 @@ function renderControls(){
   const mine = isMyTurn();
   const cp = roomState.players[currentTurnUid()];
   const myPos = roomState.positions[myUid];
+  const midMovement = !!roomState.diceTotal && !roomState.canEndTurn;
   document.getElementById("rollBtn").disabled = !mine || roomState.status !== "playing" || !!roomState.diceTotal;
-  document.getElementById("accuseBtn").disabled = !mine || roomState.status !== "playing" || !!roomState.accusedThisTurn || !isRoom(myPos);
+  document.getElementById("accuseBtn").disabled = !mine || roomState.status !== "playing" || !!roomState.accusedThisTurn || !isRoom(myPos) || midMovement;
   document.getElementById("endTurnBtn").disabled = !mine || !roomState.canEndTurn;
-  document.getElementById("suggestBtn").disabled = !mine || !isRoom(myPos) || !!roomState.suggestedThisTurn;
+  document.getElementById("suggestBtn").disabled = !mine || !isRoom(myPos) || !!roomState.suggestedThisTurn || midMovement;
 
   const passageBtn = document.getElementById("passageBtn");
   if (mine && isRoom(myPos) && SECRET_PASSAGES[myPos] && !roomState.diceTotal){
@@ -1169,6 +1170,7 @@ document.getElementById("downloadLogBtn").addEventListener("click", () => {
     if (roomState.pendingSuggestion){
       text += "\nPending suggestion (in progress): " + JSON.stringify(roomState.pendingSuggestion) + "\n";
     }
+    text += "\nNotebooks (per viewer):\n" + JSON.stringify(roomState.notebooks || {}, null, 1) + "\n";
   }
   // ---- END TEMP DEBUG SECTION ----
 
@@ -1571,7 +1573,13 @@ function handlePublicKnowledge(){
       entry.trio.forEach(card => {
         const cur = myNb[card] && myNb[card][uid];
         const isManualOrBlank = !cur || cur === "manual-yes" || cur === "manual-no";
-        if (isManualOrBlank) updates["notebooks/" + myUid + "/" + card + "/" + uid] = "auto-no";
+        if (isManualOrBlank){
+          updates["notebooks/" + myUid + "/" + card + "/" + uid] = "auto-no";
+          // Mutate local state too, so this SAME render cycle already reflects it —
+          // the Firebase write above is async and wouldn't land in time otherwise.
+          if (!myNb[card]) myNb[card] = {};
+          myNb[card][uid] = "auto-no";
+        }
       });
     });
   });
