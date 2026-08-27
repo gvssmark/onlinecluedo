@@ -22,7 +22,7 @@ const db = getDatabase(fbApp);
 const auth = getAuth(fbApp);
 
 // Bump this on every future update so it's obvious in the UI that GitHub Pages served the new build.
-const BUILD_VERSION = 22;
+const BUILD_VERSION = 23;
 document.getElementById("appTitle").textContent = "Cluedo Online " + BUILD_VERSION;
 
 let myUid = null;
@@ -822,13 +822,19 @@ setInterval(async () => {
   if (!roomState || roomState.status !== "playing" || roomState.paused || autoTurnClaimInFlight) return;
 
   const hintEl = document.getElementById("autoTimerHint");
-  if (hintEl) hintEl.textContent = "";
+  if (hintEl){
+    if (isMyTurn() && roomState.canEndTurn && roomState.canEndTurnAt){
+      const left = Math.max(0, Math.ceil((roomState.canEndTurnAt - Date.now()) / 1000));
+      hintEl.textContent = "Turn ends automatically in " + left + "s unless you act.";
+    } else {
+      hintEl.textContent = "";
+    }
+  }
 
-  // Auto-end-turn once the 10s window has passed — scoped to retired players only,
-  // since active human players found the general version too fast/relentless.
-  const currentPlayerForTimer = roomState.players[currentTurnUid()];
-  if (currentPlayerForTimer && currentPlayerForTimer.retired &&
-      roomState.canEndTurn && roomState.canEndTurnAt && Date.now() > roomState.canEndTurnAt && !roomState.pendingSuggestion){
+  // Auto-end-turn once the 10s window has passed. canEndTurnAt is only ever set at
+  // the two intended moments: a suggestion concluding (Got it / no-one-could-disprove)
+  // for anyone, or any conclusion at all for a retired player's auto-played turn.
+  if (roomState.canEndTurn && roomState.canEndTurnAt && Date.now() > roomState.canEndTurnAt && !roomState.pendingSuggestion){
     autoTurnClaimInFlight = true;
     try{ await forceAdvanceTurn(); } finally{ autoTurnClaimInFlight = false; }
     return;
@@ -1058,7 +1064,7 @@ document.getElementById("rollBtn").addEventListener("click", async () => {
   document.getElementById("die2").textContent = d2;
   document.getElementById("diceTotal").textContent = total;
   reachable = computeReachable(roomState.positions[myUid], total);
-  await update(roomRef(""), { diceTotal: total, canEndTurn: reachable.size === 0, canEndTurnAt: reachable.size === 0 ? Date.now() + 10000 : null });
+  await update(roomRef(""), { diceTotal: total, canEndTurn: reachable.size === 0, canEndTurnAt: null });
   await pushLog((roomState.players[myUid].name) + " rolled " + d1 + " + " + d2 + " = " + total + ".");
   renderBoardTokens();
   if (reachable.size === 0) offerNextAction();
@@ -1070,14 +1076,14 @@ document.getElementById("passageBtn").addEventListener("click", async () => {
   const from = roomState.positions[myUid];
   const dest = SECRET_PASSAGES[from];
   if (!dest) return;
-  await update(roomRef(""), { ["positions/" + myUid]: dest, canEndTurn: true, canEndTurnAt: Date.now() + 10000 });
+  await update(roomRef(""), { ["positions/" + myUid]: dest, canEndTurn: true, canEndTurnAt: null });
   await pushLog(roomState.players[myUid].name + " slipped through the secret passage from " + ROOMS[from].name + " to " + ROOMS[dest].name + ".");
   setTimeout(() => setActiveTab(1), 5000); // auto-shift back to Turn
 });
 
 async function onCellClick(id){
   if (!isMyTurn() || !reachable.has(id)) return;
-  await update(roomRef(""), { ["positions/" + myUid]: id, canEndTurn: true, canEndTurnAt: Date.now() + 10000 });
+  await update(roomRef(""), { ["positions/" + myUid]: id, canEndTurn: true, canEndTurnAt: null });
   reachable = new Set();
   const label = isRoom(id) ? ROOMS[id].name : "the hallway";
   await pushLog(roomState.players[myUid].name + " moved to " + label + ".");
@@ -1626,7 +1632,7 @@ function openAccusationModal(){
       );
       document.getElementById("accOkBtn").addEventListener("click", async () => {
         closeModal();
-        await update(roomRef(""), { canEndTurn: true, canEndTurnAt: Date.now() + 10000, accusedThisTurn: true });
+        await update(roomRef(""), { canEndTurn: true, canEndTurnAt: null, accusedThisTurn: true });
         await pushLog(roomState.players[myUid].name + " made an accusation. (Result kept private.)");
         offerNextAction();
       });
