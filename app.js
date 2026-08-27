@@ -22,7 +22,7 @@ const db = getDatabase(fbApp);
 const auth = getAuth(fbApp);
 
 // Bump this on every future update so it's obvious in the UI that GitHub Pages served the new build.
-const BUILD_VERSION = 21;
+const BUILD_VERSION = 22;
 document.getElementById("appTitle").textContent = "Cluedo Online " + BUILD_VERSION;
 
 let myUid = null;
@@ -821,19 +821,14 @@ let autoTurnClaimInFlight = false;
 setInterval(async () => {
   if (!roomState || roomState.status !== "playing" || roomState.paused || autoTurnClaimInFlight) return;
 
-  // Countdown display for the current-turn player.
   const hintEl = document.getElementById("autoTimerHint");
-  if (hintEl){
-    if (isMyTurn() && roomState.canEndTurn && roomState.canEndTurnAt){
-      const left = Math.max(0, Math.ceil((roomState.canEndTurnAt - Date.now()) / 1000));
-      hintEl.textContent = "Turn ends automatically in " + left + "s unless you act.";
-    } else {
-      hintEl.textContent = "";
-    }
-  }
+  if (hintEl) hintEl.textContent = "";
 
-  // General auto-end-turn once the 10s window has passed.
-  if (roomState.canEndTurn && roomState.canEndTurnAt && Date.now() > roomState.canEndTurnAt && !roomState.pendingSuggestion){
+  // Auto-end-turn once the 10s window has passed — scoped to retired players only,
+  // since active human players found the general version too fast/relentless.
+  const currentPlayerForTimer = roomState.players[currentTurnUid()];
+  if (currentPlayerForTimer && currentPlayerForTimer.retired &&
+      roomState.canEndTurn && roomState.canEndTurnAt && Date.now() > roomState.canEndTurnAt && !roomState.pendingSuggestion){
     autoTurnClaimInFlight = true;
     try{ await forceAdvanceTurn(); } finally{ autoTurnClaimInFlight = false; }
     return;
