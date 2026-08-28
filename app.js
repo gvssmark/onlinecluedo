@@ -22,7 +22,7 @@ const db = getDatabase(fbApp);
 const auth = getAuth(fbApp);
 
 // Bump this on every future update so it's obvious in the UI that GitHub Pages served the new build.
-const BUILD_VERSION = 23;
+const BUILD_VERSION = 24;
 document.getElementById("appTitle").textContent = "Cluedo Online " + BUILD_VERSION;
 
 let myUid = null;
@@ -588,6 +588,7 @@ document.getElementById("retireBtn").addEventListener("click", () => {
   document.getElementById("retireConfirmBtn").addEventListener("click", async () => {
     closeModal();
     await update(roomRef("players/" + myUid), { retired: true });
+    await pushLog(roomState.players[myUid].name + " has retired — the system will play their remaining turns.");
   });
 });
 
@@ -626,7 +627,7 @@ document.getElementById("startGameBtn").addEventListener("click", async () => {
     hands[uid].forEach(c => { notebooks[uid][c][uid] = "auto-have"; });
   });
   await update(ref(db, "rooms/" + roomCode), {
-    status: "playing", envelope, hands, positions, notebooks, startedAt: Date.now(),
+    status: "playing", envelope, hands, positions, notebooks, startedAt: Date.now(), turnSeq: 0,
     turnIndex: 0, suggestedThisTurn: false, accusedThisTurn: false,
     log: [{msg: "Cards dealt. The envelope is sealed. Rule: " + (roomState.ruleMode==="family"?"Family":"Normal") + ".", ts: Date.now()}],
   });
@@ -734,6 +735,13 @@ function renderGame(){
   renderLog();
   renderCluesRow();
   cacheRoomData();
+
+  // If the turn advanced (whether by manual click or the auto-timer, possibly on
+  // another device), any "What next?" popup left open on this device is now stale.
+  if (lastKnownTurnIndex !== null && roomState.turnIndex !== lastKnownTurnIndex){
+    closeModal();
+  }
+  lastKnownTurnIndex = roomState.turnIndex;
 
   const nowMyTurn = isMyTurn();
   if (nowMyTurn && !wasMyTurn){
@@ -850,7 +858,7 @@ setInterval(async () => {
 
 async function tryAutoPlayRetiredTurn(){
   const turnUid = currentTurnUid();
-  const claimKey = "autoplay:" + roomState.turnIndex;
+  const claimKey = "autoplay:" + (roomState.turnSeq || 0);
   const result = await runTransaction(roomRef("autoPlayTurnClaim"), (cur) => {
     if (cur === claimKey) return; // already claimed for this turn — abort
     return claimKey;
@@ -908,6 +916,7 @@ function renderCluesRow(){
 const TAB_IDS = ["board","turn","notebook","log","help"];
 let activeTabIndex = 0;
 let wasMyTurn = false;
+let lastKnownTurnIndex = null;
 function setActiveTab(idx){
   activeTabIndex = Math.max(0, Math.min(TAB_IDS.length - 1, idx));
   document.getElementById("tabTrack").style.transform = "translateX(-" + (activeTabIndex * 20) + "%)";
@@ -1098,7 +1107,7 @@ async function endMyTurn(){
   document.getElementById("die1").textContent = "–";
   document.getElementById("die2").textContent = "–";
   document.getElementById("diceTotal").textContent = "–";
-  await update(roomRef(""), { turnIndex: nextIdx, diceTotal: null, canEndTurn: false, canEndTurnAt: null, suggestedThisTurn: false, accusedThisTurn: false });
+  await update(roomRef(""), { turnIndex: nextIdx, turnSeq: (roomState.turnSeq || 0) + 1, diceTotal: null, canEndTurn: false, canEndTurnAt: null, suggestedThisTurn: false, accusedThisTurn: false });
 }
 document.getElementById("endTurnBtn").addEventListener("click", endMyTurn);
 
@@ -1113,7 +1122,7 @@ async function forceAdvanceTurn(){
   });
   if (!result.committed) return;
   const nextIdx = (roomState.turnIndex + 1) % roomState.order.length;
-  await update(roomRef(""), { turnIndex: nextIdx, diceTotal: null, canEndTurn: false, suggestedThisTurn: false, accusedThisTurn: false });
+  await update(roomRef(""), { turnIndex: nextIdx, turnSeq: (roomState.turnSeq || 0) + 1, diceTotal: null, canEndTurn: false, suggestedThisTurn: false, accusedThisTurn: false });
 }
 
 function offerNextAction(){
@@ -1475,24 +1484,30 @@ async function actAsResponder(ps){
 }
 
 function showResponderModal(ps, options, mandatory){
-  const optBtns = options.map(c => "<button class='card-option' data-card='"+c+"' style='display:block;width:100%;text-align:left;background:#111823;border:1px solid #3a475a;border-radius:4px;padding:9px 10px;margin-bottom:6px;color:#ece4d3;font-family:monospace;font-size:12.5px;cursor:pointer;'>"+c+"</button>").join("");
+  const optBtns = options.map(c => "<button class='card-option' data-card='"+c+"'" + (mandatory ? "" : " disabled") +
+    " style='display:block;width:100%;text-align:left;background:" + (mandatory ? "#111823" : "#1a2028") +
+    ";border:1px solid " + (mandatory ? "#3a475a" : "#2a323f") + ";border-radius:4px;padding:9px 10px;margin-bottom:6px;color:" +
+    (mandatory ? "#ece4d3" : "#5a6472") + ";font-family:monospace;font-size:12.5px;" +
+    (mandatory ? "cursor:pointer;" : "cursor:not-allowed;") + "'>" + c + (mandatory ? "" : " (already shown)") + "</button>").join("");
   const passBtn = mandatory ? "" : "<button class='block secondary' id='sugPassBtn'>Pass — already shown</button>";
   showModal(
-    "<h3>" + (mandatory ? "You can disprove this" : "Show again, or pass?") + "</h3>" +
+    "<h3>" + (mandatory ? "You can disprove this" : "Nothing new to show") + "</h3>" +
     "<p>" + roomState.players[ps.suggester].name + " suggested <b>"+ps.suspect+"</b>, <b>"+ps.weapon+"</b>, <b>"+ps.room+"</b>. " +
-    (mandatory ? "Pick one matching card to show them privately." : "You've already shown every matching card you hold — show one again, or pass.") + "</p>" +
+    (mandatory ? "Pick one matching card to show them privately." : "You've already shown every matching card you hold to them before — pass.") + "</p>" +
     optBtns + passBtn
   );
-  modalBox.querySelectorAll(".card-option").forEach(btn => {
-    btn.addEventListener("click", async () => {
-      const card = btn.dataset.card;
-      closeModal();
-      await pushSuggestionEvent(ps, { by: myUid, matched: true, card });
-      await update(ref(db, "rooms/" + roomCode + "/players/" + myUid + "/shownTo/" + card), { [ps.suggester]: true });
-      await advanceQueue(ps, true); // showing a card always ends the check, both rules
-      responderModalOpen = false;
+  if (mandatory){
+    modalBox.querySelectorAll(".card-option").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        const card = btn.dataset.card;
+        closeModal();
+        await pushSuggestionEvent(ps, { by: myUid, matched: true, card });
+        await update(ref(db, "rooms/" + roomCode + "/players/" + myUid + "/shownTo/" + card), { [ps.suggester]: true });
+        await advanceQueue(ps, true); // showing a card always ends the check, both rules
+        responderModalOpen = false;
+      });
     });
-  });
+  }
   const passBtnEl = document.getElementById("sugPassBtn");
   if (passBtnEl){
     passBtnEl.addEventListener("click", async () => {
